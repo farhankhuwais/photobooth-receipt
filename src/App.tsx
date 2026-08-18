@@ -29,12 +29,29 @@ export default function App() {
   function captureFrame() {
     const video = videoRef.current
     if (!video || !video.videoWidth || !video.videoHeight) return
+    // Crop center ke aspect 4:3 (sama dengan layout template cetak: shotH = shotW*0.75)
+    const tar = 4 / 3
+    const vAr = video.videoWidth / video.videoHeight
+    let sx = 0
+    let sy = 0
+    let sw = video.videoWidth
+    let sh = video.videoHeight
+    if (vAr > tar) {
+      sw = video.videoHeight * tar
+      sx = (video.videoWidth - sw) / 2
+    } else {
+      sh = video.videoWidth / tar
+      sy = (video.videoHeight - sh) / 2
+    }
     const c = document.createElement('canvas')
-    c.width = video.videoWidth
-    c.height = video.videoHeight
+    c.width = Math.round(sw)
+    c.height = Math.round(sh)
     const ctx = c.getContext('2d')
     if (!ctx) return
-    ctx.drawImage(video, 0, 0, c.width, c.height)
+    // Mirror horizontal biar sama dengan preview (CSS -scale-x-100)
+    ctx.translate(c.width, 0)
+    ctx.scale(-1, 1)
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height)
     addShot(c.toDataURL('image/jpeg', 0.9))
   }
 
@@ -157,30 +174,49 @@ export default function App() {
         
         {status !== 'done' && (
           <>
-            <div className="flex-grow w-full max-w-3xl mx-auto border-4 border-black brutal-shadow bg-surface-container flex flex-col relative overflow-hidden group mt-4">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="absolute inset-0 w-full h-full object-cover z-0 -scale-x-100"
-              />
-              
-              <div className="absolute top-sm right-sm z-10 bg-primary-container border-2 border-black px-sm py-xs text-on-primary-container font-label-bold text-label-bold flex items-center gap-xs shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                <span className="w-2 h-2 rounded-full bg-error animate-pulse border border-black"></span> LIVE
-              </div>
+            <div className="flex-grow w-full max-w-3xl mx-auto flex flex-col items-center justify-center mt-4">
+              {/* Frame kamera aspect 4:3 — sama dengan layout hasil cetak */}
+              <div className="relative w-full max-w-2xl aspect-[4/3] border-4 border-black brutal-shadow bg-surface-container overflow-hidden">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="absolute inset-0 w-full h-full object-cover z-0 -scale-x-100"
+                />
 
-              {status === 'capturing' && countdown !== null && (
-                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none">
-                    <div className="absolute inset-0 border-x-4 border-black opacity-20 w-[80%] max-w-md mx-auto h-full mix-blend-overlay"></div>
-                    <div className="absolute inset-0 border-y-4 border-black opacity-20 h-[80%] max-h-lg my-auto w-full mix-blend-overlay"></div>
-                    <div className="relative">
-                      <span className={`font-display text-display font-black text-primary-container select-none text-[150px] leading-none ${countdown > 0 ? 'pulse-text' : ''}`} style={{textShadow: '6px 6px 0px #000, 0 0 20px #ffff00'}}>
-                        {countdown === 0 ? '📸' : countdown}
-                      </span>
+                {/* Guide grid sesuai template (biar user tahu framing foto) */}
+                <div className="absolute inset-0 z-10 pointer-events-none">
+                  {template === 'grid2x2' && (
+                    <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
+                      {[0, 1, 2, 3].map((i) => (
+                        <div key={i} className="border border-dashed border-white/70" />
+                      ))}
                     </div>
-                 </div>
-              )}
+                  )}
+                  {template === 'strip3' && (
+                    <div className="flex flex-col w-full h-full">
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} className="flex-1 border border-dashed border-white/70" />
+                      ))}
+                    </div>
+                  )}
+                  {/* single: seluruh frame = 1 foto, tanpa guide dalam */}
+                </div>
+
+                <div className="absolute top-sm right-sm z-20 bg-primary-container border-2 border-black px-sm py-xs text-on-primary-container font-label-bold text-label-bold flex items-center gap-xs shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                  <span className="w-2 h-2 rounded-full bg-error animate-pulse border border-black"></span> LIVE
+                </div>
+
+                {/* Countdown transparan — TIDAK menutupi kamera */}
+                {status === 'capturing' && countdown !== null && (
+                  <div className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none">
+                    <span className={`font-display text-display font-black text-primary-container select-none text-[150px] leading-none ${countdown > 0 ? 'pulse-text' : ''}`} style={{ textShadow: '6px 6px 0px #000, 0 0 20px #ffff00' }}>
+                      {countdown === 0 ? '📸' : countdown}
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {status === 'idle' ? (
@@ -217,7 +253,7 @@ export default function App() {
                   
                   <div className="flex gap-sm justify-between overflow-x-auto pb-2">
                      {Array.from({length: shotCount}).map((_, i) => (
-                       <div key={i} className={`flex-1 min-w-[60px] aspect-[3/4] border-4 border-black ${shots[i] ? 'bg-white' : (i === shots.length ? 'bg-surface-container-high border-dashed animate-pulse' : 'bg-surface-container-highest')} flex items-center justify-center relative overflow-hidden`}>
+                       <div key={i} className={`flex-1 min-w-[60px] aspect-[4/3] border-4 border-black ${shots[i] ? 'bg-white' : (i === shots.length ? 'bg-surface-container-high border-dashed animate-pulse' : 'bg-surface-container-highest')} flex items-center justify-center relative overflow-hidden`}>
                           {shots[i] ? (
                             <img src={shots[i]} className="w-full h-full object-cover -scale-x-100" />
                           ) : (
