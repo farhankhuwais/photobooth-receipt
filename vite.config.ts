@@ -21,5 +21,12 @@ export default defineConfig({
       }
     })
   ],
-  server: { host: true, port: 5173 }
+  server: { host: true, port: 5173 },
+  preview: {
+    host: true,
+    port: 5173,
+    // Izinkan akses lewat Cloudflare Tunnel / domain publik.
+    // Ganti dengan domain kamu, atau true untuk allow semua host.
+    allowedHosts: ['achipix.achidev.my.id', 'localhost', '127.0.0.1']
+  }
 })
