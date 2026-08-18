@@ -18,7 +18,7 @@ const TEMPLATES = [
 
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, status, digitalUrl, addShot, setTemplate } = useSession()
+  const { shots, template, shotCount, branding, status, digitalUrl, addShot, setTemplate, resetShots } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
@@ -98,6 +98,13 @@ export default function App() {
     setMsg(r)
   }
 
+  function onReset() {
+    resetShots()
+    setStripUrl(null)
+    setCountdown(null)
+    setMsg('')
+  }
+
   function onSaveBin() {
     if (!stripCanvas.current) return
     const job = buildPrintJob(stripCanvas.current)
@@ -123,8 +130,12 @@ export default function App() {
     <div className="bg-background text-on-surface min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
       {/* Header */}
       <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-background border-b-4 border-black brutal-shadow-sm">
-        <button className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm">
-          <span className="material-symbols-outlined text-on-surface">camera</span>
+        <button
+          onClick={onReset}
+          title="Mulai ulang sesi"
+          className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm"
+        >
+          <span className="material-symbols-outlined text-on-surface">restart_alt</span>
         </button>
         <div className="flex flex-col items-center">
           <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
@@ -180,7 +191,7 @@ export default function App() {
                     {TEMPLATES.map((t) => (
                       <button
                         key={t.id}
-                        disabled={status === 'capturing'}
+                        disabled={false}
                         onClick={() => setTemplate(t.id)}
                         className={`flex-1 py-3 border-4 border-black neo-button shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] font-label-bold text-label-bold whitespace-nowrap ${template === t.id ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
                       >
