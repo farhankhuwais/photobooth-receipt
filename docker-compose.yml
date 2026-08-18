@@ -1,0 +1,25 @@
+services:
+  photobooth:
+    build: .
+    container_name: photobooth
+    restart: unless-stopped
+    ports:
+      - "8099:8080"            # host 8099 -> container 8080 (hindari bentrok dgn 80/3000/8080)
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      PGHOST: postgres-kontrakan   # hostname Postgres di docker network
+      PGPORT: "5432"
+      PGUSER: photobooth
+      PGDATABASE: photobooth
+      # password dibaca dari file ter-mount di bawah (db.mjs: /tmp/photobooth_pg_pw.txt)
+    volumes:
+      - /tmp/photobooth_pg_pw.txt:/tmp/photobooth_pg_pw.txt:ro
+    networks:
+      - photobooth-net
+
+networks:
+  photobooth-net:
+    name: photobooth-net
+    driver: bridge
+    external: true

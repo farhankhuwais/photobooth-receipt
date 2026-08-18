@@ -9,3 +9,6 @@ dev.log
 dev.err
 .DS_Store
 .vite/
+
+# build cache
+*.tsbuildinfo
