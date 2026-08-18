@@ -120,141 +120,155 @@ export default function App() {
   }, [branding, digitalUrl, status])
 
   return (
-    <div className="min-h-full flex flex-col items-center p-4 gap-4 max-w-md mx-auto">
-      <header className="w-full flex items-center justify-between pt-2">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">📸</span>
-          <div className="leading-tight">
-            <div className="font-bold text-lg tracking-tight">Photobooth</div>
-            <div className="text-xs text-slate-400 truncate max-w-[180px]">{branding.eventName}</div>
-          </div>
+    <div className="bg-background text-on-surface min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+      {/* Header */}
+      <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-background border-b-4 border-black brutal-shadow-sm">
+        <button className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm">
+          <span className="material-symbols-outlined text-on-surface">camera</span>
+        </button>
+        <div className="flex flex-col items-center">
+          <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
+          <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">{branding.eventName}</span>
         </div>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm"
-        >
-          ⚙ Event
+        <button onClick={() => setShowSettings(true)} className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm">
+          <span className="material-symbols-outlined text-on-surface">settings</span>
         </button>
       </header>
 
       {error && (
-        <div className="w-full rounded-xl bg-red-500/10 border border-red-500/40 text-red-300 text-sm p-3">
+        <div className="w-full max-w-md mx-auto mt-[80px] bg-error-container border-4 border-black text-on-error-container font-label-bold p-3 brutal-shadow-sm">
           {error}
         </div>
       )}
 
-      <div className="flex-1 w-full flex flex-col items-center justify-center gap-4">
-        <div className="relative w-full aspect-[3/4] bg-black rounded-3xl overflow-hidden ring-1 ring-slate-700 shadow-2xl">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={`w-full h-full object-cover -scale-x-100 ${status === 'done' ? 'invisible' : ''}`}
-          />
-          {status !== 'done' && countdown !== null && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-white text-8xl font-black drop-shadow-[0_4px_12px_rgba(0,0,0,0.6)] animate-pulse">
-                {countdown === 0 ? '📷' : countdown}
+      {/* Main Layout */}
+      <main className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-background px-margin-mobile' : 'bg-on-background px-margin-mobile'}`}>
+        
+        {status !== 'done' && (
+          <>
+            <div className="flex-grow w-full max-w-3xl mx-auto border-4 border-black brutal-shadow bg-surface-container flex flex-col relative overflow-hidden group mt-4">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 w-full h-full object-cover z-0 -scale-x-100"
+              />
+              
+              <div className="absolute top-sm right-sm z-10 bg-primary-container border-2 border-black px-sm py-xs text-on-primary-container font-label-bold text-label-bold flex items-center gap-xs shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                <span className="w-2 h-2 rounded-full bg-error animate-pulse border border-black"></span> LIVE
               </div>
-            </div>
-          )}
-          {status === 'done' && stripUrl && (
-            <img
-              src={stripUrl}
-              alt="strip"
-              className="absolute inset-0 w-full h-full object-contain bg-white"
-            />
-          )}
-          {status === 'idle' && !error && (
-            <div className="absolute bottom-0 inset-x-0 p-3 text-center text-slate-300 text-sm bg-gradient-to-t from-black/60 to-transparent">
-              Siap? Pencet MULAI
-            </div>
-          )}
-        </div>
 
-        {status !== 'done' ? (
-          <div className="w-full flex flex-col items-center gap-4">
-            <div className="flex gap-2 w-full">
-              {TEMPLATES.map((t) => (
-                <button
-                  key={t.id}
-                  disabled={status === 'capturing'}
-                  onClick={() => setTemplate(t.id)}
-                  className={`flex-1 px-2 py-2 rounded-xl text-sm font-medium border transition ${
-                    template === t.id
-                      ? 'bg-pink-500 text-white border-pink-500'
-                      : 'bg-slate-800/60 border-slate-700 text-slate-200'
-                  } disabled:opacity-40`}
-                >
-                  {t.label}
-                </button>
-              ))}
+              {status === 'capturing' && countdown !== null && (
+                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none">
+                    <div className="absolute inset-0 border-x-4 border-black opacity-20 w-[80%] max-w-md mx-auto h-full mix-blend-overlay"></div>
+                    <div className="absolute inset-0 border-y-4 border-black opacity-20 h-[80%] max-h-lg my-auto w-full mix-blend-overlay"></div>
+                    <div className="relative">
+                      <span className={`font-display text-display font-black text-primary-container select-none text-[150px] leading-none ${countdown > 0 ? 'pulse-text' : ''}`} style={{textShadow: '6px 6px 0px #000, 0 0 20px #ffff00'}}>
+                        {countdown === 0 ? '📸' : countdown}
+                      </span>
+                    </div>
+                 </div>
+              )}
             </div>
 
-            {status === 'idle' && (
-              <button
-                onClick={runCapture}
-                className="w-full py-5 rounded-2xl bg-gradient-to-r from-pink-500 to-fuchsia-500 hover:from-pink-400 hover:to-fuchsia-400 text-white text-xl font-extrabold shadow-lg active:scale-95 transition"
-              >
-                MULAI 📸
-              </button>
-            )}
-            {status === 'capturing' && (
-              <div className="flex flex-col items-center gap-2">
-                {shots.length > 0 && (
-                  <div className="flex gap-1">
-                    {shots.map((s, idx) => (
-                      <img
-                        key={idx}
-                        src={s}
-                        className="w-10 h-14 object-cover rounded-md border border-slate-600"
-                      />
+            {status === 'idle' ? (
+              <div className="w-full max-w-3xl mx-auto flex flex-col gap-lg mt-auto pb-sm pt-4">
+                <div className="flex flex-col gap-sm">
+                  <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-widest text-[12px] bg-white self-start px-2 py-1 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">Template</span>
+                  <div className="flex gap-sm md:gap-md">
+                    {TEMPLATES.map((t) => (
+                      <button
+                        key={t.id}
+                        disabled={status === 'capturing'}
+                        onClick={() => setTemplate(t.id)}
+                        className={`flex-1 py-3 border-4 border-black neo-button shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] font-label-bold text-label-bold whitespace-nowrap ${template === t.id ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
+                      >
+                        {t.label}
+                      </button>
                     ))}
                   </div>
-                )}
-                <div className="text-slate-300 text-sm">
-                  Ambil {Math.min(shots.length + 1, shotCount)}/{shotCount}...
+                </div>
+                
+                <button onClick={runCapture} className="w-full py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group">
+                  <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
+                  <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">MULAI</span>
+                  <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
+                </button>
+              </div>
+            ) : (
+              <div className="mt-auto z-20 pb-sm w-full pt-4">
+                <div className="bg-surface border-4 border-black p-sm brutal-shadow mx-auto max-w-3xl">
+                  <div className="flex justify-between items-center mb-sm px-xs">
+                    <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider">Capturing</span>
+                    <span className="font-label-bold text-label-bold text-on-surface bg-primary-container px-2 border-2 border-black">{shots.length} / {shotCount}</span>
+                  </div>
+                  
+                  <div className="flex gap-sm justify-between overflow-x-auto pb-2">
+                     {Array.from({length: shotCount}).map((_, i) => (
+                       <div key={i} className={`flex-1 min-w-[60px] aspect-[3/4] border-4 border-black ${shots[i] ? 'bg-white' : (i === shots.length ? 'bg-surface-container-high border-dashed animate-pulse' : 'bg-surface-container-highest')} flex items-center justify-center relative overflow-hidden`}>
+                          {shots[i] ? (
+                            <img src={shots[i]} className="w-full h-full object-cover -scale-x-100" />
+                          ) : (
+                            <span className="material-symbols-outlined text-on-surface-variant opacity-20">photo_camera</span>
+                          )}
+                       </div>
+                     ))}
+                  </div>
+                  
+                  <div className="h-4 border-4 border-black bg-white mt-sm w-full relative overflow-hidden">
+                    <div className="absolute top-0 left-0 h-full bg-primary-container border-r-4 border-black transition-all duration-300 ease-linear" style={{ width: `${(shots.length / shotCount) * 100}%` }}></div>
+                  </div>
                 </div>
               </div>
             )}
-          </div>
-        ) : (
-          <div className="w-full flex flex-col items-center gap-3">
-            <div className="flex w-full gap-2">
-              <button
-                onClick={onPrint}
-                className="flex-1 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white font-bold active:scale-95 transition"
-              >
-                🖨 Cetak
-              </button>
-              <button
-                onClick={onShare}
-                className="flex-1 py-3 rounded-xl bg-sky-500 hover:bg-sky-400 text-white font-bold active:scale-95 transition"
-              >
-                ↗ Share
-              </button>
-              <button
-                onClick={runCapture}
-                className="flex-1 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold active:scale-95 transition"
-              >
-                ↺ Ulangi
-              </button>
-            </div>
-            {msg && <div className="text-emerald-300 text-sm text-center">{msg}</div>}
-            <button
-              onClick={onSaveBin}
-              className="text-xs text-slate-400 underline hover:text-slate-200"
-            >
-              Simpan ESC/POS (.bin)
-            </button>
-          </div>
+          </>
         )}
-      </div>
 
-      <footer className="text-[11px] text-slate-500 text-center pb-2">
-        Template: {template} · {shots.length} shot
-      </footer>
+        {status === 'done' && (
+          <>
+            <section className="w-full max-w-sm mx-auto md:col-span-6 md:col-start-4 flex flex-col items-center gap-md relative mt-4">
+              <div className="absolute -top-10 -left-10 w-20 h-20 bg-primary-container border-4 border-black rounded-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-0 animate-[bounce_3s_infinite]"></div>
+              <div className="absolute top-1/2 -right-8 w-16 h-16 bg-secondary-container border-4 border-black rotate-12 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] z-0"></div>
+              <div className="w-full bg-surface-container-lowest border-4 border-black p-4 brutal-shadow flex flex-col gap-unit relative z-10 transform -rotate-1 hover:rotate-0 transition-transform duration-300">
+                {stripUrl && <img src={stripUrl} alt="strip" className="w-full h-auto" />}
+              </div>
+              <p className="font-headline-md text-headline-md-mobile text-on-surface bg-primary-container px-4 py-2 border-4 border-black brutal-shadow-sm rotate-2 mt-4 uppercase">
+                LOOKIN' GOOD! ✨
+              </p>
+            </section>
+
+            <section className="w-full md:col-span-12 flex flex-col gap-md mt-lg md:max-w-2xl md:mx-auto relative z-20">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-md w-full">
+                <button onClick={runCapture} className="w-full py-4 px-6 bg-surface-variant border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
+                  <div className="absolute inset-0 bg-black/5 -translate-x-full group-hover:translate-x-0 transition-transform duration-300"></div>
+                  <span className="material-symbols-outlined text-4xl text-on-surface-variant group-hover:-rotate-90 transition-transform duration-300">refresh</span>
+                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-surface">↺ ULANGI</span>
+                </button>
+                <button onClick={onShare} className="w-full py-4 px-6 bg-tertiary border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden sm:-translate-y-4">
+                  <div className="absolute inset-0 bg-white/20 -translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                  <span className="material-symbols-outlined text-4xl text-on-tertiary group-hover:scale-110 transition-transform duration-300" style={{fontVariationSettings: "'FILL' 1"}}>share</span>
+                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-tertiary">↗ SHARE</span>
+                </button>
+                <button onClick={onPrint} className="w-full py-4 px-6 bg-primary-container border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
+                  <div className="absolute inset-0 bg-black/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                  <span className="material-symbols-outlined text-4xl text-on-primary-container group-hover:-translate-y-2 transition-transform duration-300" style={{fontVariationSettings: "'FILL' 1"}}>print</span>
+                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-primary-container">🖨 CETAK</span>
+                </button>
+              </div>
+              
+              {msg && <div className="text-on-surface font-label-bold text-center mt-2 bg-surface-container-high border-2 border-black px-2 py-1 mx-auto brutal-shadow-sm">{msg}</div>}
+
+              <div className="w-full flex justify-center mt-md">
+                <button onClick={onSaveBin} className="font-label-bold text-label-bold text-on-surface-variant underline decoration-2 decoration-black/50 hover:decoration-black hover:text-on-surface transition-colors flex items-center gap-1 bg-surface-container-high px-4 py-2 border-2 border-black brutal-shadow-sm brutal-button-active">
+                  <span className="material-symbols-outlined text-sm">terminal</span>
+                  Simpan ESC/POS (.bin)
+                </button>
+              </div>
+            </section>
+          </>
+        )}
+      </main>
 
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
     </div>

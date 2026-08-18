@@ -5,9 +5,42 @@
 html, body, #root { height: 100%; }
 body {
   margin: 0;
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: radial-gradient(120% 120% at 50% 0%, #1e293b 0%, #0f172a 55%, #020617 100%);
-  color: #e2e8f0;
-  -webkit-user-select: none;
-  user-select: none;
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  background-image: radial-gradient(circle at 2px 2px, #dadada 1px, transparent 0);
+  background-size: 24px 24px;
+  background-color: #f9f9f9;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 1;
+}
+
+.neo-button {
+  transition: all 0.075s ease-in-out;
+}
+.neo-button:active {
+  transform: translate(4px, 4px);
+  box-shadow: none !important;
+}
+
+.brutal-shadow {
+  box-shadow: 6px 6px 0px 0px rgba(0,0,0,1);
+}
+.brutal-shadow-sm {
+  box-shadow: 3px 3px 0px 0px rgba(0,0,0,1);
+}
+.brutal-button-active:active {
+  transform: translate(4px, 4px);
+  box-shadow: none !important;
+}
+
+@keyframes pulse-scale {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+.pulse-text {
+  animation: pulse-scale 1s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  text-shadow: 0 0 20px #ffff00, 0 0 40px #ffff00;
 }
