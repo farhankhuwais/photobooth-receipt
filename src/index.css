@@ -1,0 +1,9 @@
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: radial-gradient(120% 120% at 50% 0%, #1e293b 0%, #0f172a 55%, #020617 100%);
+  color: #e2e8f0;
+  -webkit-user-select: none;
+  user-select: none;
+}

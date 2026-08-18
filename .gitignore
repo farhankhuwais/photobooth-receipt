@@ -1,0 +1,11 @@
+node_modules/
+dist/
+server/node_modules/
+server/uploads/
+*.log
+.env
+.env.*
+dev.log
+dev.err
+.DS_Store
+.vite/
