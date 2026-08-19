@@ -18,7 +18,7 @@ const TEMPLATES = [
 
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, status, digitalUrl, addShot, setTemplate, resetShots } = useSession()
+  const { shots, template, shotCount, branding, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setTemplate, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
@@ -103,11 +103,44 @@ export default function App() {
     }
   }
 
-  async function onPrint() {
+  // CETAK = gerbang pembayaran. Buka layar BAYAR (QRIS / CASH), jangan print langsung.
+  function onPrint() {
     if (!stripCanvas.current) return
-    const res = await printSmart(stripCanvas.current, useSession.getState().bridgeUrl)
-    setMsg(res.message)
+    openPay()
   }
+
+  // Saat lunas (QRIS simulasi ATAU cash dikonfirmasi operator), cetak otomatis
+  // + log transaksi ke server (untuk dashboard admin).
+  useEffect(() => {
+    if (!paid || !stripCanvas.current) return
+    let active = true
+    ;(async () => {
+      const res = await printSmart(stripCanvas.current!, useSession.getState().bridgeUrl)
+      if (active) setMsg(res.message)
+      // Log transaksi: method diambil dari paymentMethod store (sudah di-set
+      // saat lunas: payQrisSim -> 'qris', confirmCashPaid -> 'cash').
+      const s = useSession.getState()
+      const method = s.paymentMethod || 'unknown'
+      try {
+        await fetch('/portal/api/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method,
+            amount: 5000,
+            template: s.template,
+            note: method === 'cash' ? 'operator confirm' : 'qris sim'
+          })
+        })
+      } catch {
+        /* log gagal tidak menggagalkan print */
+      }
+      resetPay()
+    })()
+    return () => {
+      active = false
+    }
+  }, [paid, resetPay])
 
   async function onShare() {
     if (!stripUrl) return
@@ -143,37 +176,70 @@ export default function App() {
     })
   }, [branding, digitalUrl, status])
 
+  // Auto-reset ke layar attract setelah hasil selesai ditampilkan (kiosk mode).
+  // Customer berikutnya dapat sesi bersih. Dibatalkan kalau user klik ULANGI (status berubah).
+  useEffect(() => {
+    if (status !== 'done') return
+    const t = setTimeout(() => goAttract(), 20000)
+    return () => clearTimeout(t)
+  }, [status, goAttract])
+
+  // Saat kembali ke layar attract, bersihkan preview lokal (foto customer ilang).
+  useEffect(() => {
+    if (screen === 'attract') {
+      setStripUrl(null)
+      setCountdown(null)
+      setMsg('')
+    }
+  }, [screen])
+
   return (
     <div className="bg-background text-on-surface min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
-      {/* Header */}
-      <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-background border-b-4 border-black brutal-shadow-sm">
-        <button
-          onClick={onReset}
-          title="Mulai ulang sesi"
-          className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm"
-        >
-          <span className="material-symbols-outlined text-on-surface">restart_alt</span>
-        </button>
-        <div className="flex flex-col items-center">
-          <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
-          <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">{branding.eventName}</span>
-        </div>
-        <button onClick={() => setShowSettings(true)} className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm">
-          <span className="material-symbols-outlined text-on-surface">settings</span>
-        </button>
-      </header>
+      {screen === 'attract' ? (
+        /* Layar attract — kiosk idle, customer tap untuk mulai */
+        <main className="flex-grow flex flex-col items-center justify-center bg-background px-margin-mobile select-none">
+          <button
+            onClick={enterBooth}
+            className="group relative flex flex-col items-center justify-center gap-md w-[min(90vw,720px)] aspect-[4/3] border-4 border-black bg-surface-container brutal-shadow hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-[120px] text-on-surface group-hover:scale-110 transition-transform duration-300">touch_app</span>
+            <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider text-on-surface">Sentuh untuk mulai</span>
+            <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-widest text-[12px]">Photobooth • Rp 5.000 / cetak</span>
+            <div className="absolute -top-10 -left-10 w-20 h-20 bg-primary-container border-4 border-black rounded-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-[bounce_3s_infinite]"></div>
+            <div className="absolute bottom-6 -right-8 w-16 h-16 bg-secondary-container border-4 border-black rotate-12 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"></div>
+          </button>
+        </main>
+      ) : (
+        <>
+          {/* Header */}
+          <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-background border-b-4 border-black brutal-shadow-sm">
+            <button
+              onClick={onReset}
+              title="Mulai ulang sesi"
+              className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm"
+            >
+              <span className="material-symbols-outlined text-on-surface">restart_alt</span>
+            </button>
+            <div className="flex flex-col items-center">
+              <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
+              <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">{branding.eventName}</span>
+            </div>
+            <button onClick={() => setShowSettings(true)} className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm">
+              <span className="material-symbols-outlined text-on-surface">settings</span>
+            </button>
+          </header>
 
-      {error && (
-        <div className="w-full max-w-md mx-auto mt-[80px] bg-error-container border-4 border-black text-on-error-container font-label-bold p-3 brutal-shadow-sm">
-          {error}
-        </div>
-      )}
+          {error && (
+            <div className="w-full max-w-md mx-auto mt-[80px] bg-error-container border-4 border-black text-on-error-container font-label-bold p-3 brutal-shadow-sm">
+              {error}
+            </div>
+          )}
 
-      {/* Main Layout */}
-      <main className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-background px-margin-mobile' : 'bg-on-background px-margin-mobile'}`}>
-        
-        {status !== 'done' && (
-          <>
+          {/* Main Layout */}
+          <main className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-background px-margin-mobile' : 'bg-on-background px-margin-mobile'}`}>
+
+            {status !== 'done' && screen === 'booth' && (
+              <>
             <div className="flex-grow w-full max-w-3xl mx-auto flex flex-col items-center justify-center mt-4">
               {/* Frame kamera aspect 4:3 — sama dengan layout hasil cetak */}
               <div className="relative w-full max-w-2xl aspect-[4/3] border-4 border-black brutal-shadow bg-surface-container overflow-hidden">
@@ -316,6 +382,57 @@ export default function App() {
           </>
         )}
       </main>
+      </>
+      )}
+
+      {/* Layar BAYAR — gerbang CETAK. QRIS (simulasi) ATAU Cash (manual operator). */}
+      {payStage === 'paying' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-on-background/95 backdrop-blur px-margin-mobile">
+          <div className="w-full max-w-2xl bg-surface-container border-4 border-black brutal-shadow p-lg flex flex-col gap-md">
+            <div className="flex items-center justify-between">
+              <h2 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black uppercase text-on-surface">Bayar</h2>
+              <span className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface bg-primary-container border-2 border-black px-3 py-1">Rp 5.000</span>
+              <button onClick={closePay} className="w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button" title="Batal">
+                <span className="material-symbols-outlined text-on-surface">close</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-md">
+              {/* QRIS */}
+              <button
+                onClick={payQrisSim}
+                className="flex flex-col items-center justify-center gap-2 py-8 border-4 border-black bg-surface brutal-shadow hover:bg-surface-variant transition-colors relative overflow-hidden group"
+              >
+                <span className="material-symbols-outlined text-[64px] text-on-surface group-hover:scale-110 transition-transform">qr_code_2</span>
+                <span className="font-headline-md text-headline-md-mobile uppercase text-on-surface">📱 QRIS</span>
+                <span className="font-label-bold text-label-bold text-on-surface-variant text-[11px] uppercase tracking-widest">(simulasi lunas)</span>
+              </button>
+
+              {/* CASH */}
+              <button
+                onClick={chooseCash}
+                disabled={cashConfirm}
+                className="flex flex-col items-center justify-center gap-2 py-8 border-4 border-black bg-surface brutal-shadow hover:bg-surface-variant transition-colors relative overflow-hidden group disabled:opacity-60"
+              >
+                <span className="material-symbols-outlined text-[64px] text-on-surface group-hover:scale-110 transition-transform">paid</span>
+                <span className="font-headline-md text-headline-md-mobile uppercase text-on-surface">💵 Cash</span>
+                <span className="font-label-bold text-label-bold text-on-surface-variant text-[11px] uppercase tracking-widest">terima tunai</span>
+              </button>
+            </div>
+
+            {/* Konfirmasi 2-tap cash (anti salah tekan) */}
+            {cashConfirm && (
+              <div className="flex flex-col gap-sm bg-error-container border-4 border-black p-sm">
+                <p className="font-label-bold text-label-bold text-on-error-container uppercase text-center">Operator: sudah terima uang Rp 5.000?</p>
+                <div className="flex gap-sm">
+                  <button onClick={closePay} className="flex-1 py-3 border-2 border-black bg-surface font-label-bold text-label-bold uppercase">Batal</button>
+                  <button onClick={confirmCashPaid} className="flex-1 py-3 border-4 border-black bg-primary-container text-on-primary-container font-label-bold text-label-bold uppercase brutal-shadow hover:bg-primary">Ya, sudah bayar</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
     </div>

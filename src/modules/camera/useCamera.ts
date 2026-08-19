@@ -6,6 +6,7 @@ export function useCamera() {
   const streamRef = useRef<MediaStream | null>(null)
   const setStream = useSession((s) => s.setStream)
   const status = useSession((s) => s.status)
+  const screen = useSession((s) => s.screen)
   const [error, setError] = useState<string | null>(null)
 
   // Tempelkan stream ke elemen <video> yang sedang ada di DOM.
@@ -20,11 +21,13 @@ export function useCamera() {
     if (v.paused) v.play().catch(() => {})
   }
 
-  // Saat status keluar dari 'done', elemen <video> di-remount (elemen baru).
-  // Pastikan stream ditempelkan ulang ke elemen tersebut.
+  // Saat layar berubah attract -> booth (atau status keluar dari 'done'),
+  // elemen <video> di-remount sebagai elemen BARU. Pastikan stream
+  // ditempelkan ulang ke elemen tersebut, kalau tidak kamera akan hitam.
+  // Hanya attach kalau elemen video memang sedang dirender (screen === 'booth').
   useEffect(() => {
-    if (status !== 'done') attach()
-  }, [status])
+    if (screen === 'booth' && status !== 'done') attach()
+  }, [screen, status])
 
   useEffect(() => {
     let cancelled = false

@@ -13,7 +13,7 @@ import cors from 'cors'
 import multer from 'multer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset } from './db.mjs'
+import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -101,6 +101,130 @@ app.post('/api/print', express.json({ limit: '4mb' }), async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
+})
+
+// ── Admin dashboard (email+password, scrypt + DB session, model spt kontrakan) ──
+const ADMIN_SESSION_COOKIE = 'pb_admin_session'
+
+function parseCookies(req) {
+  const out = {}
+  for (const c of (req.headers.cookie || '').split('; ')) {
+    const i = c.indexOf('=')
+    if (i > 0) out[c.slice(0, i)] = c.slice(i + 1)
+  }
+  return out
+}
+
+function requireAccess(req, res, next) {
+  const token = parseCookies(req).admin_session || parseCookies(req)[ADMIN_SESSION_COOKIE]
+  getSessionUser(token)
+    .then((user) => {
+      if (!user) return res.status(401).json({ error: 'unauthorized' })
+      req.adminUser = user
+      next()
+    })
+    .catch(() => res.status(401).json({ error: 'unauthorized' }))
+}
+
+app.post('/portal/api/login', express.json({ limit: '1mb' }), async (req, res) => {
+  const { email, password } = req.body || {}
+  if (!email || !password) return res.status(400).json({ error: 'email & password wajib' })
+  const userId = await verifyAdmin(email, password)
+  if (!userId) return res.status(401).json({ error: 'email atau password salah' })
+  const token = await createSession(userId)
+  res.set(
+    'Set-Cookie',
+    `${ADMIN_SESSION_COOKIE}=${token}; Path=/portal; HttpOnly; SameSite=Strict; Max-Age=${30 * 24 * 3600}`
+  )
+  res.json({ ok: true })
+})
+
+app.post('/portal/api/logout', express.json({ limit: '1mb' }), async (req, res) => {
+  const token = parseCookies(req)[ADMIN_SESSION_COOKIE]
+  if (token) await destroySession(token)
+  res.set('Set-Cookie', `${ADMIN_SESSION_COOKIE}=; Path=/portal; HttpOnly; Max-Age=0`)
+  res.json({ ok: true })
+})
+
+// App memanggil ini saat transaksi lunas (QRIS simulasi ATAU cash dikonfirmasi).
+// Endpoint INI SENGAJA TIDAK pakai requireAccess: kiosk booth tidak punya session
+// admin, jadi kalau dilindungi auth transaksi tidak akan tercatat (401).
+// Hanya validasi field wajib; bukan endpoint baca data sensitif.
+app.post('/portal/api/log', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const { method, amount, template, note } = req.body || {}
+    if (!method || !amount) return res.status(400).json({ error: 'method & amount required' })
+    if (!['qris', 'cash'].includes(method)) return res.status(400).json({ error: 'method tidak valid' })
+    const row = await saveTransaction({ method, amount: Number(amount), template: template || null, note: note || null })
+    res.json({ ok: true, id: row.id })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.get('/portal/api/stats', requireAccess, async (_req, res) => {
+  try {
+    res.json(await getStats())
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.get('/portal/api/transactions', requireAccess, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 10000, 100000)
+    const from = typeof req.query.from === 'string' ? req.query.from : null
+    const to = typeof req.query.to === 'string' ? req.query.to : null
+    res.json(await listTransactions({ limit, from, to }))
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Ganti password admin (verifikasi password lama dulu).
+app.post('/portal/api/change-password', express.json({ limit: '1mb' }), requireAccess, async (req, res) => {
+  const { current, next } = req.body || {}
+  if (!current || !next) return res.status(400).json({ error: 'password lama & baru wajib' })
+  const out = await changePassword(req.adminUser.id, current, next)
+  if (!out.ok) return res.status(400).json({ error: out.error })
+  res.json({ ok: true })
+})
+
+// Export transaksi (filter from/to) ke CSV.
+app.get('/portal/api/export', requireAccess, async (req, res) => {
+  try {
+    const from = typeof req.query.from === 'string' ? req.query.from : null
+    const to = typeof req.query.to === 'string' ? req.query.to : null
+    const rows = await listTransactions({ limit: 100000, from, to })
+    const esc = (v) => {
+      const s = v === null || v === undefined ? '' : String(v)
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const header = ['id', 'waktu', 'metode', 'template', 'nominal', 'catatan']
+    const lines = [header.join(',')]
+    for (const r of rows) {
+      lines.push([
+        r.id,
+        new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 19),
+        r.method,
+        r.template || '',
+        r.amount,
+        r.note || '',
+      ].map(esc).join(','))
+    }
+    const stamp = new Date().toISOString().slice(0, 10)
+    res.set('Content-Type', 'text/csv; charset=utf-8')
+    res.set('Content-Disposition', `attachment; filename="photobooth-transaksi-${stamp}.csv"`)
+    res.send('﻿' + lines.join('\n')) // BOM biar Excel baca UTF-8
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Halaman dashboard statis — SELALU tampilkan (form login ada di dalamnya).
+// Yang wajib requireAccess hanya endpoint /portal/api/* di atas, bukan halaman ini.
+app.get('/portal', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'admin.html'))
 })
 
 // SPA fallback (Express 5 safe: no wildcard path)

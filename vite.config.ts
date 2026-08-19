@@ -18,6 +18,13 @@ export default defineConfig({
         icons: [
           { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }
         ]
+      },
+      workbox: {
+        // Jangan pakai index.html sebagai fallback untuk /portal — biar server
+        // yang mengirim admin.html (dashboard). Tanpa ini, refresh di /portal
+        // malah menampilkan index.html (app booth) => tampilan blank.
+        navigateFallbackDenylist: [/^\/portal/],
+        cleanupOutdatedCaches: true
       }
     })
   ],

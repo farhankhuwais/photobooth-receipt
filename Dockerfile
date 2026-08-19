@@ -15,6 +15,6 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 # Copy built frontend + server entrypoints
 COPY --from=build /app/dist ./dist
-COPY serve.mjs db.mjs ./
+COPY serve.mjs db.mjs admin.html ./
 EXPOSE 8080
 CMD ["node", "serve.mjs"]

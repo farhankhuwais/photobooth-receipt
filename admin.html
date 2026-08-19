@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Photobooth Admin</title>
+<style>
+  :root { --ink:#000; --bg:#fde047; --card:#fff; --line:#000; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 20px; border-bottom:4px solid var(--line); background:#fff; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { margin:0; font-size:22px; font-weight:900; text-transform:uppercase; letter-spacing:-0.5px; }
+  .wrap { padding:20px; max-width:1000px; margin:0 auto; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }
+  .card { background:var(--card); border:4px solid var(--line); box-shadow:6px 6px 0 #000; padding:16px; }
+  .card .label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; opacity:.6; }
+  .card .val { font-size:30px; font-weight:900; margin-top:4px; }
+  .card .sub { font-size:12px; margin-top:6px; opacity:.7; }
+  table { width:100%; border-collapse:collapse; background:#fff; border:4px solid var(--line); box-shadow:6px 6px 0 #000; margin-top:18px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:2px solid var(--line); font-size:14px; }
+  th { background:#000; color:#fff; text-transform:uppercase; font-size:11px; letter-spacing:1px; }
+  tr:nth-child(even) td { background:#fafafa; }
+  .pill { display:inline-block; padding:2px 8px; border:2px solid #000; border-radius:2px; font-size:11px; font-weight:800; text-transform:uppercase; }
+  .pill.qris { background:#bbf7d0; }
+  .pill.cash { background:#fde68a; }
+  h2 { font-size:16px; font-weight:900; text-transform:uppercase; margin:28px 0 8px; }
+  #err { background:#fee2e2; border:3px solid #000; padding:10px 12px; margin-bottom:14px; font-weight:700; display:none; }
+  button.refresh { background:#000; color:#fff; border:3px solid #000; padding:8px 16px; font-weight:800; text-transform:uppercase; cursor:pointer; }
+  button.refresh:hover { background:#fff; color:#000; }
+  button.logout { background:#fff; color:#000; border:3px solid #000; padding:8px 16px; font-weight:800; text-transform:uppercase; cursor:pointer; }
+  button.logout:hover { background:#000; color:#fff; }
+  /* Login form */
+  #login { max-width:360px; margin:60px auto; background:#fff; border:4px solid var(--line); box-shadow:8px 8px 0 #000; padding:24px; }
+  #login h2 { margin:0 0 14px; text-align:center; }
+  #login label { display:block; font-size:12px; font-weight:800; text-transform:uppercase; margin:10px 0 4px; }
+  #login input { width:100%; padding:12px; font-size:16px; border:3px solid #000; }
+  #login button { width:100%; margin-top:14px; padding:12px; background:#000; color:#fff; border:3px solid #000; font-weight:900; text-transform:uppercase; cursor:pointer; }
+  #login button:hover { background:#fff; color:#000; }
+  #login .err { background:#fee2e2; border:2px solid #000; padding:8px; margin-top:10px; font-weight:700; display:none; }
+  /* Filters + export bar */
+  .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; background:#fff; border:4px solid var(--line); box-shadow:6px 6px 0 #000; padding:14px; margin-top:18px; }
+  .filters .field { display:flex; flex-direction:column; }
+  .filters label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; opacity:.6; margin-bottom:4px; }
+  .filters input[type=date] { padding:10px; font-size:14px; border:3px solid #000; }
+  .filters button { padding:10px 14px; font-weight:800; text-transform:uppercase; cursor:pointer; border:3px solid #000; }
+  .filters button.apply { background:#000; color:#fff; }
+  .filters button.apply:hover { background:#fff; color:#000; }
+  button.csv { background:#bbf7d0; color:#000; }
+  button.csv:hover { background:#000; color:#bbf7d0; }
+  button.iconbtn { background:#fff; color:#000; border:3px solid #000; width:44px; height:44px; font-size:20px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+  button.iconbtn:hover { background:#000; color:#fff; }
+  .filters .spacer { flex:1; }
+  .quickgroup { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .quickgroup .qlabel { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; opacity:.6; }
+  .quickgroup .quick { padding:8px 12px; font-weight:800; text-transform:uppercase; cursor:pointer; border:3px solid #000; background:#fff; color:#000; font-size:12px; }
+  .quickgroup .quick:hover { background:#000; color:#fff; }
+  /* Change password — modal popup */
+  #pwPanel { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  #pwPanel .box { width:100%; max-width:420px; background:#fff; border:4px solid var(--line); box-shadow:8px 8px 0 #000; padding:20px; }
+  #pwPanel .top { display:flex; justify-content:space-between; align-items:center; }
+  #pwPanel h2 { margin:0; }
+  #pwPanel .x { background:#fff; color:#000; border:3px solid #000; width:36px; height:36px; font-size:18px; font-weight:900; cursor:pointer; }
+  #pwPanel .x:hover { background:#000; color:#fff; }
+  #pwPanel label { display:block; font-size:12px; font-weight:800; text-transform:uppercase; margin:10px 0 4px; }
+  #pwPanel input { width:100%; padding:11px; font-size:15px; border:3px solid #000; }
+  #pwPanel .row { display:flex; gap:10px; }
+  #pwPanel .row button { flex:1; margin-top:14px; padding:11px; font-weight:900; text-transform:uppercase; cursor:pointer; border:3px solid #000; }
+  #pwPanel .save { background:#000; color:#fff; }
+  #pwPanel .save:hover { background:#fff; color:#000; }
+  #pwPanel .cancel { background:#fff; color:#000; }
+  #pwPanel .cancel:hover { background:#000; color:#fff; }
+  #pwPanel .err { background:#fee2e2; border:2px solid #000; padding:8px; margin-top:10px; font-weight:700; display:none; }
+  #pwPanel .ok { background:#bbf7d0; border:2px solid #000; padding:8px; margin-top:10px; font-weight:700; display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📸 Photobooth Admin</h1>
+  <div id="headerActions" style="display:none">
+    <button class="iconbtn" title="Ganti Password" onclick="showPwPanel()">🔑</button>
+    <button class="iconbtn" title="Logout" onclick="doLogout()">⎋</button>
+  </div>
+</header>
+
+<!-- Login email+password -->
+<div id="login" style="display:none">
+  <h2>🔒 Admin Login</h2>
+  <label for="email">Email</label>
+  <input id="email" type="email" placeholder="email" autocomplete="username" />
+  <label for="password">Password</label>
+  <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+  <button onclick="doLogin()">Masuk</button>
+  <div class="err" id="loginErr"></div>
+  </div>
+
+<div class="wrap" id="dash" style="display:none">
+  <div id="err"></div>
+
+  <!-- Filter tanggal + Export CSV -->
+  <div class="filters">
+    <div class="field">
+      <label for="from">Dari</label>
+      <input id="from" type="date" />
+    </div>
+    <div class="field">
+      <label for="to">Sampai</label>
+      <input id="to" type="date" />
+    </div>
+    <button class="apply" onclick="applyFilter()">Terapkan</button>
+    <button class="apply" onclick="resetFilter()">Reset</button>
+    <div class="quickgroup">
+      <span class="qlabel">Cepat:</span>
+      <button class="quick" onclick="quickRange('today')">Hari Ini</button>
+      <button class="quick" onclick="quickRange('7d')">7 Hari</button>
+      <button class="quick" onclick="quickRange('30d')">30 Hari</button>
+      <button class="quick" onclick="quickRange('month')">Bulan Ini</button>
+    </div>
+    <div class="spacer"></div>
+    <button class="csv" onclick="exportCsv()">⬇ Export CSV</button>
+  </div>
+
+  <div class="grid" id="kpis"></div>
+  <h2>Jam Sibuk (hari ini)</h2>
+  <div class="card" id="hours">—</div>
+  <h2>Transaksi Terakhir</h2>
+  <table>
+    <thead><tr><th>Waktu</th><th>Metode</th><th>Template</th><th>Nominal</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="4">memuat…</td></tr></tbody>
+  </table>
+</div>
+
+<!-- Panel ganti password (modal popup) -->
+<div id="pwPanel" onclick="if(event.target===this)hidePwPanel()">
+  <div class="box">
+    <div class="top">
+      <h2>🔑 Ganti Password</h2>
+      <button class="x" title="Tutup" onclick="hidePwPanel()">×</button>
+    </div>
+    <label for="pwCurrent">Password Lama</label>
+    <input id="pwCurrent" type="password" placeholder="••••••••" autocomplete="current-password" />
+    <label for="pwNew">Password Baru (min 6 karakter)</label>
+    <input id="pwNew" type="password" placeholder="••••••••" autocomplete="new-password" />
+    <label for="pwConfirm">Ulangi Password Baru</label>
+    <input id="pwConfirm" type="password" placeholder="••••••••" autocomplete="new-password" />
+    <div class="row">
+      <button class="cancel" onclick="hidePwPanel()">Batal</button>
+      <button class="save" onclick="doChangePw()">Simpan</button>
+    </div>
+    <div class="err" id="pwErr"></div>
+    <div class="ok" id="pwOk">Password berhasil diubah</div>
+  </div>
+</div>
+
+<script>
+const fmt = (n) => 'Rp ' + Number(n).toLocaleString('id-ID')
+const fmtTime = (iso) => new Date(iso).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })
+
+function showLogin() {
+  document.getElementById('headerActions').style.display = 'none'
+  document.getElementById('dash').style.display = 'none'
+  document.getElementById('login').style.display = 'block'
+}
+function showDash() {
+  document.getElementById('login').style.display = 'none'
+  document.getElementById('dash').style.display = 'block'
+  document.getElementById('headerActions').style.display = 'flex'
+  load()
+}
+
+async function doLogin() {
+  const email = document.getElementById('email').value
+  const password = document.getElementById('password').value
+  const err = document.getElementById('loginErr')
+  err.style.display = 'none'
+  try {
+    const r = await fetch('/portal/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    })
+    if (!r.ok) { err.textContent = 'Email atau password salah'; err.style.display = 'block'; return }
+    showDash()
+  } catch (e) {
+    err.textContent = 'Gagal: ' + e.message
+    err.style.display = 'block'
+  }
+}
+
+async function doLogout() {
+  await fetch('/portal/api/logout', { method: 'POST' })
+  showLogin()
+}
+
+document.getElementById('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin() })
+document.getElementById('email').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin() })
+
+async function load() {
+  const errEl = document.getElementById('err')
+  errEl.style.display = 'none'
+  const from = document.getElementById('from').value
+  const to = document.getElementById('to').value
+  const filtered = !!(from || to)
+  const qs = new URLSearchParams()
+  qs.set('limit', '10000')
+  if (from) qs.set('from', from)
+  if (to) qs.set('to', to)
+  const label = filtered ? 'Periode' : 'Semua'
+  try {
+    const [stats, tx] = await Promise.all([
+      fetch('/portal/api/stats').then(r => { if(!r.ok) throw new Error('stats '+r.status); return r.json() }),
+      fetch('/portal/api/transactions?' + qs.toString()).then(r => { if(!r.ok) throw new Error('tx '+r.status); return r.json() })
+    ])
+    const total = tx.length
+    const amount = tx.reduce((a, t) => a + Number(t.amount || 0), 0)
+    const qris = tx.filter(t => t.method === 'qris').length
+    const cash = tx.filter(t => t.method === 'cash').length
+    // Jam sibuk (group by jam lokal)
+    const byHour = {}
+    for (const t of tx) {
+      const h = new Date(t.created_at).getHours()
+      byHour[h] = (byHour[h] || 0) + 1
+    }
+    const hoursArr = Object.entries(byHour).map(([h, c]) => ({ hour: Number(h), cnt: c })).sort((a, b) => a.hour - b.hour)
+    document.getElementById('kpis').innerHTML = `
+      <div class="card"><div class="label">Cetak (${label})</div><div class="val">${total}</div><div class="sub">total ${stats.summary.total_count}</div></div>
+      <div class="card"><div class="label">Omzet (${label})</div><div class="val">${fmt(amount)}</div><div class="sub">total ${fmt(stats.summary.total_amount)}</div></div>
+      <div class="card"><div class="label">QRIS (${label})</div><div class="val">${qris}</div><div class="sub">cetak ${label.toLowerCase()}</div></div>
+      <div class="card"><div class="label">Cash (${label})</div><div class="val">${cash}</div><div class="sub">cetak ${label.toLowerCase()}</div></div>
+    `
+    document.getElementById('hours').textContent = hoursArr.length
+      ? hoursArr.map(h => `${String(h.hour).padStart(2,'0')}:00 → ${h.cnt} cetak`).join('   •   ')
+      : (filtered ? 'tidak ada transaksi di periode ini' : 'belum ada transaksi')
+    document.getElementById('rows').innerHTML = tx.length
+      ? tx.map(t => `<tr><td>${fmtTime(t.created_at)}</td><td><span class="pill ${t.method}">${t.method}</span></td><td>${t.template||'-'}</td><td>${fmt(t.amount)}</td></tr>`).join('')
+      : '<tr><td colspan="4">belum ada transaksi</td></tr>'
+  } catch (e) {
+    if (String(e.message).includes('401')) {
+      showLogin()
+    } else {
+      errEl.textContent = 'Gagal muat: ' + e.message
+      errEl.style.display = 'block'
+    }
+  }
+}
+
+function applyFilter() {
+  const from = document.getElementById('from').value
+  const to = document.getElementById('to').value
+  if (from && to && to < from) {
+    const e = document.getElementById('err')
+    e.textContent = 'Tanggal "Sampai" harus ≥ "Dari"'
+    e.style.display = 'block'
+    return
+  }
+  load()
+}
+
+function resetFilter() {
+  document.getElementById('from').value = ''
+  document.getElementById('to').value = ''
+  load()
+}
+
+function ymd(d) {
+  const z = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`
+}
+
+function quickRange(kind) {
+  const now = new Date()
+  const fromEl = document.getElementById('from')
+  const toEl = document.getElementById('to')
+  let from
+  if (kind === 'today') {
+    from = ymd(now)
+  } else if (kind === '7d') {
+    const d = new Date(now); d.setDate(d.getDate() - 6); from = ymd(d)
+  } else if (kind === '30d') {
+    const d = new Date(now); d.setDate(d.getDate() - 29); from = ymd(d)
+  } else if (kind === 'month') {
+    from = ymd(new Date(now.getFullYear(), now.getMonth(), 1))
+  } else {
+    return
+  }
+  fromEl.value = from
+  toEl.value = ymd(now)
+  const e = document.getElementById('err'); e.style.display = 'none'
+  load()
+}
+
+function exportCsv() {
+  const from = document.getElementById('from').value
+  const to = document.getElementById('to').value
+  const qs = new URLSearchParams()
+  if (from) qs.set('from', from)
+  if (to) qs.set('to', to)
+  const url = '/portal/api/export' + (qs.toString() ? '?' + qs.toString() : '')
+  window.open(url, '_blank')
+}
+
+function showPwPanel() {
+  const p = document.getElementById('pwPanel')
+  p.style.display = 'flex'
+  document.getElementById('pwErr').style.display = 'none'
+  document.getElementById('pwOk').style.display = 'none'
+  document.getElementById('pwCurrent').value = ''
+  document.getElementById('pwNew').value = ''
+  document.getElementById('pwConfirm').value = ''
+  document.getElementById('pwCurrent').focus()
+}
+
+function hidePwPanel() {
+  document.getElementById('pwPanel').style.display = 'none'
+}
+
+async function doChangePw() {
+  const cur = document.getElementById('pwCurrent').value
+  const nw = document.getElementById('pwNew').value
+  const cf = document.getElementById('pwConfirm').value
+  const err = document.getElementById('pwErr')
+  const ok = document.getElementById('pwOk')
+  err.style.display = 'none'; ok.style.display = 'none'
+  if (nw !== cf) { err.textContent = 'Password baru tidak cocok'; err.style.display = 'block'; return }
+  try {
+    const r = await fetch('/portal/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current: cur, next: nw })
+    })
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}))
+      err.textContent = j.error || ('Gagal (' + r.status + ')')
+      err.style.display = 'block'; return
+    }
+    ok.style.display = 'block'
+    document.getElementById('pwCurrent').value = ''
+    document.getElementById('pwNew').value = ''
+    document.getElementById('pwConfirm').value = ''
+  } catch (e) {
+    err.textContent = 'Gagal: ' + e.message
+    err.style.display = 'block'
+  }
+}
+
+load()
+setInterval(load, 20000)
+</script>
+</body>
+</html>

@@ -8,6 +8,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: "8080"
+      ADMIN_EMAIL: "admin@photobooth.local"   # GANTI email admin (sesuai keinginan)
+      ADMIN_PASSWORD: "admin123"             # GANTI password admin (jangan pakai default)
       PGHOST: postgres-kontrakan   # hostname Postgres di docker network
       PGPORT: "5432"
       PGUSER: photobooth
