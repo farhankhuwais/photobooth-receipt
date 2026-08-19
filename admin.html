@@ -47,8 +47,9 @@
   .filters button.apply:hover { background:#fff; color:#000; }
   button.csv { background:#bbf7d0; color:#000; }
   button.csv:hover { background:#000; color:#bbf7d0; }
-  button.iconbtn { background:#fff; color:#000; border:3px solid #000; width:44px; height:44px; font-size:20px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+  button.iconbtn { background:transparent; color:#000; border:3px solid #000; box-shadow:3px 3px 0 #000; width:44px; height:44px; font-size:20px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
   button.iconbtn:hover { background:#000; color:#fff; }
+  button.iconbtn:active { box-shadow:0 0 0 #000; transform:translate(3px,3px); }
   .filters .spacer { flex:1; }
   .quickgroup { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .quickgroup .qlabel { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; opacity:.6; }
@@ -77,8 +78,8 @@
 <header>
   <h1>📸 Photobooth Admin</h1>
   <div id="headerActions" style="display:none">
-    <button class="iconbtn" title="Ganti Password" onclick="showPwPanel()">🔑</button>
-    <button class="iconbtn" title="Logout" onclick="doLogout()">⎋</button>
+    <button class="iconbtn pw" title="Ganti Password" onclick="showPwPanel()">🔑</button>
+    <button class="iconbtn out" title="Logout" onclick="doLogout()">🚪</button>
   </div>
 </header>
 
@@ -159,11 +160,22 @@ function showLogin() {
   document.getElementById('headerActions').style.display = 'none'
   document.getElementById('dash').style.display = 'none'
   document.getElementById('login').style.display = 'block'
+  // Kosongkan field biar setelah logout tidak ada sisa email/password
+  // yang bisa dipakai langsung masuk lagi (terutama di kiosk publik).
+  const e = document.getElementById('email'); if (e) e.value = ''
+  const p = document.getElementById('password'); if (p) p.value = ''
+  const le = document.getElementById('loginErr'); if (le) le.style.display = 'none'
 }
 function showDash() {
   document.getElementById('login').style.display = 'none'
   document.getElementById('dash').style.display = 'block'
   document.getElementById('headerActions').style.display = 'flex'
+  // Default filter = hari ini (biar omset/KPI langsung nunjukkan hari ini).
+  const now = new Date()
+  const z = (n) => String(n).padStart(2, '0')
+  const today = `${now.getFullYear()}-${z(now.getMonth() + 1)}-${z(now.getDate())}`
+  document.getElementById('from').value = today
+  document.getElementById('to').value = today
   load()
 }
 
@@ -187,6 +199,7 @@ async function doLogin() {
 }
 
 async function doLogout() {
+  if (!window.confirm('Yakin ingin keluar?')) return
   await fetch('/portal/api/logout', { method: 'POST' })
   showLogin()
 }
