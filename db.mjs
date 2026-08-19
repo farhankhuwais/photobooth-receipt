@@ -72,6 +72,12 @@ export async function initDb() {
       user_id     INTEGER NOT NULL REFERENCES admin_user(id) ON DELETE CASCADE,
       expires_at  TIMESTAMPTZ NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS frames (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      image_data  BYTEA NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `)
   // Seed default admin dari env (hanya kalau belum ada user sama sekali)
   const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM admin_user')
@@ -207,6 +213,30 @@ export async function listPresets() {
 export async function getPreset(name) {
   const r = await pool.query('SELECT branding FROM presets WHERE name = $1', [name])
   return r.rows[0]?.branding || null
+}
+
+// ── Custom frame gallery (stored in Postgres, selectable by customer) ──────
+export async function saveFrame(id, name, buf) {
+  await pool.query(
+    `INSERT INTO frames (id, name, image_data, created_at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, image_data = EXCLUDED.image_data`,
+    [id, name, buf]
+  )
+  return id
+}
+
+export async function listFrames() {
+  const r = await pool.query('SELECT id, name, created_at FROM frames ORDER BY created_at ASC')
+  return r.rows
+}
+
+export async function getFrame(id) {
+  const r = await pool.query('SELECT image_data FROM frames WHERE id = $1', [id])
+  return r.rows[0]?.image_data || null
+}
+
+export async function deleteFrame(id) {
+  await pool.query('DELETE FROM frames WHERE id = $1', [id])
 }
 
 export default pool

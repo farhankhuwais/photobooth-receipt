@@ -12,8 +12,9 @@ import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword } from './db.mjs'
+import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -75,6 +76,49 @@ app.get('/api/presets/:name', async (req, res) => {
     const branding = await getPreset(req.params.name)
     if (!branding) return res.status(404).json({ error: 'not found' })
     res.json(branding)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// ── Custom frame gallery (operator upload, customer pilih di booth) ──
+// Daftar frame (tanpa blob) untuk dirender sebagai pilihan di booth.
+app.get('/api/frames', async (_req, res) => {
+  try {
+    res.json(await listFrames())
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Upload frame PNG baru (operator, via Pengaturan Event).
+app.post('/api/frames', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'no image' })
+    const id = crypto.randomUUID()
+    const name = req.body?.name || `frame-${Date.now()}`
+    await saveFrame(id, name, req.file.buffer)
+    res.json({ id, name })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Ambil blob PNG satu frame (dipakai saat render hasil cetak).
+app.get('/api/frames/:id', async (req, res) => {
+  try {
+    const data = await getFrame(req.params.id)
+    if (!data) return res.status(404).end()
+    res.set('Content-Type', 'image/png')
+    res.set('Cache-Control', 'public, max-age=31536000, immutable')
+    res.send(data)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Hapus frame (operator).
+app.delete('/api/frames/:id', async (req, res) => {
+  try {
+    await deleteFrame(req.params.id)
+    res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }

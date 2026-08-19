@@ -1,8 +1,16 @@
 import { create } from 'zustand'
 
 export type TemplateId = 'strip3' | 'grid2x2' | 'single'
+export type FrameId = 'none' | 'love' | 'party' | 'vintage' | 'neon' | 'floral'
 export type Screen = 'attract' | 'booth'
 export type PaymentMethod = 'qris' | 'cash'
+
+// Satu frame custom yang tersimpan di DB (gallery). `url` = endpoint blob PNG.
+export interface FrameDef {
+  id: string
+  name: string
+  url: string
+}
 
 export interface BrandingConfig {
   eventName: string
@@ -10,6 +18,7 @@ export interface BrandingConfig {
   showDate: boolean
   watermark: string
   qrText: string
+  frame: FrameId
 }
 
 export type SessionStatus = 'idle' | 'capturing' | 'done'
@@ -20,6 +29,9 @@ interface SessionState {
   template: TemplateId
   shotCount: number
   branding: BrandingConfig
+  // Gallery frame custom (dari DB) + pilihan customer.
+  frames: FrameDef[]
+  selectedFrameId: string | null
   status: SessionStatus
   screen: Screen
   paid: boolean
@@ -33,6 +45,8 @@ interface SessionState {
   addShot: (dataUrl: string) => void
   resetShots: () => void
   setBranding: (b: Partial<BrandingConfig>) => void
+  setFrames: (f: FrameDef[]) => void
+  setSelectedFrameId: (id: string | null) => void
   setStatus: (s: SessionStatus) => void
   setScreen: (s: Screen) => void
   setPaid: (p: boolean) => void
@@ -55,7 +69,8 @@ const DEFAULT_BRANDING: BrandingConfig = {
   logoDataUrl: null,
   showDate: true,
   watermark: '',
-  qrText: ''
+  qrText: '',
+  frame: 'none',
 }
 
 function loadBranding(): BrandingConfig {
@@ -82,6 +97,8 @@ export const useSession = create<SessionState>((set) => ({
   template: 'strip3',
   shotCount: 3,
   branding: loadBranding(),
+  frames: [],
+  selectedFrameId: null,
   status: 'idle',
   screen: 'attract',
   paid: false,
@@ -95,6 +112,8 @@ export const useSession = create<SessionState>((set) => ({
   addShot: (dataUrl) => set((s) => ({ shots: [...s.shots, dataUrl] })),
   resetShots: () => set({ shots: [], status: 'idle', digitalUrl: null }),
   setBranding: (b) => set((s) => ({ branding: { ...s.branding, ...b } })),
+  setFrames: (frames) => set({ frames }),
+  setSelectedFrameId: (id) => set({ selectedFrameId: id }),
   setStatus: (status) => set({ status }),
   setScreen: (screen) => set({ screen }),
   setPaid: (paid) => set({ paid }),

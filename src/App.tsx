@@ -18,13 +18,30 @@ const TEMPLATES = [
 
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setTemplate, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
+  const { shots, template, shotCount, branding, frames, selectedFrameId, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setTemplate, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
   const running = useRef(false)
+
+  // Load gallery frame custom dari DB saat boot.
+  useEffect(() => {
+    let active = true
+    fetch('/api/frames')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id: string; name: string }[]) => {
+        if (!active) return
+        useSession.getState().setFrames(
+          list.map((f) => ({ id: f.id, name: f.name, url: `/api/frames/${f.id}` }))
+        )
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
 
   function captureFrame() {
     const video = videoRef.current
@@ -60,7 +77,7 @@ export default function App() {
     if (!s.shots.length) return
     let qrUrl: string | null = s.digitalUrl
     if (s.bridgeUrl) {
-      const first = await composeStrip(s.shots, s.branding, s.template, '')
+      const first = await composeStrip(s.shots, s.branding, s.template, '', s.frames, s.selectedFrameId)
       try {
         qrUrl = await uploadStrip(first.toDataURL('image/png'), s.bridgeUrl)
         useSession.getState().setDigitalUrl(qrUrl)
@@ -68,7 +85,7 @@ export default function App() {
         qrUrl = s.branding.qrText || null
       }
     }
-    const canvas = await composeStrip(s.shots, s.branding, s.template, qrUrl)
+    const canvas = await composeStrip(s.shots, s.branding, s.template, qrUrl, s.frames, s.selectedFrameId)
     stripCanvas.current = canvas
     setStripUrl(canvas.toDataURL('image/png'))
   }
@@ -102,6 +119,12 @@ export default function App() {
       running.current = false
     }
   }
+
+  // Saat customer ganti bingkai custom (gallery), compose ulang preview hasil.
+  useEffect(() => {
+    if (status === 'done') finishCompose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFrameId, frames])
 
   // CETAK = gerbang pembayaran. Buka layar BAYAR (QRIS / CASH), jangan print langsung.
   function onPrint() {
@@ -170,18 +193,20 @@ export default function App() {
 
   useEffect(() => {
     if (status !== 'done' || !stripCanvas.current || !useSession.getState().shots.length) return
-    composeStrip(useSession.getState().shots, branding, useSession.getState().template, digitalUrl).then((c) => {
+    const s = useSession.getState()
+    composeStrip(s.shots, s.branding, s.template, s.digitalUrl, s.frames, s.selectedFrameId).then((c) => {
       stripCanvas.current = c
       setStripUrl(c.toDataURL('image/png'))
     })
-  }, [branding, digitalUrl, status])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branding, digitalUrl, status, selectedFrameId, frames])
 
-  // Auto-reset ke layar attract setelah hasil selesai ditampilkan (kiosk mode).
-  // Customer berikutnya dapat sesi bersih. Dibatalkan kalau user klik ULANGI (status berubah).
+  // Layar hasil TIDAK auto-reset; customer balik ke attract via tombol "AKHIRI SESI"
+  // (atau ULANGI untuk foto ulang). Biar tidak tiba-tiba hilang saat lagi lihat foto.
+  // Auto-reset dihapus — ganti tombol manual di bawah.
   useEffect(() => {
     if (status !== 'done') return
-    const t = setTimeout(() => goAttract(), 20000)
-    return () => clearTimeout(t)
+    // no auto-timeout; sesi diakhiri manual
   }, [status, goAttract])
 
   // Saat kembali ke layar attract, bersihkan preview lokal (foto customer ilang).
@@ -352,6 +377,44 @@ export default function App() {
             </section>
 
             <section className="w-full md:col-span-12 flex flex-col gap-md mt-lg md:max-w-2xl md:mx-auto relative z-20">
+              {/* Pilihan template/frame dekoratif — setelah foto, sebelum cetak */}
+              <div className="w-full bg-surface border-4 border-black p-sm brutal-shadow flex flex-col gap-xs">
+                <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">Pilih Template ✨</span>
+                <div className="flex gap-xs overflow-x-auto pb-1">
+                  {(['none','love','party','vintage','neon','floral'] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setBranding({ frame: f })}
+                      className={`flex-none px-3 py-2 border-4 border-black neo-button font-label-bold text-label-bold uppercase text-[12px] whitespace-nowrap ${branding.frame === f ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
+                    >
+                      {f === 'none' ? 'Polos' : f === 'love' ? 'Love' : f === 'party' ? 'Party' : f === 'vintage' ? 'Vintage' : f === 'neon' ? 'Neon' : 'Floral'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Gallery frame custom dari DB — customer pilih 1 (bisa lebih dari satu) */}
+              {frames.length > 0 && (
+                <div className="w-full bg-surface border-4 border-black p-sm brutal-shadow flex flex-col gap-xs">
+                  <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">Bingkai Custom ✨</span>
+                  <div className="flex gap-xs overflow-x-auto pb-1">
+                    {frames.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => setSelectedFrameId(selectedFrameId === f.id ? null : f.id)}
+                        className={`flex-none border-4 border-black bg-white neo-button transition-all duration-75 ${selectedFrameId === f.id ? 'bg-primary-container' : 'hover:bg-surface-variant'}`}
+                        title={f.name}
+                      >
+                        <img src={f.url} alt={f.name} className={`h-12 w-9 object-contain ${selectedFrameId === f.id ? 'ring-2 ring-black' : ''}`} />
+                      </button>
+                    ))}
+                  </div>
+                  {selectedFrameId && (
+                    <span className="font-label-bold text-label-bold text-on-surface-variant text-[10px] uppercase">Bingkai dipilih — hasil cetak otomatis update</span>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-md w-full">
                 <button onClick={runCapture} className="w-full py-4 px-6 bg-surface-variant border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
                   <div className="absolute inset-0 bg-black/5 -translate-x-full group-hover:translate-x-0 transition-transform duration-300"></div>
@@ -370,6 +433,15 @@ export default function App() {
                 </button>
               </div>
               
+              {/* Akhiri sesi -> balik ke layar awal "Sentuh untuk mulai" */}
+              <button
+                onClick={goAttract}
+                className="w-full py-3 px-6 bg-surface border-4 border-black flex items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden"
+              >
+                <span className="material-symbols-outlined text-3xl text-on-surface group-hover:scale-110 transition-transform">exit_to_app</span>
+                <span className="font-headline-md text-headline-md-mobile uppercase text-on-surface">AKHIRI SESI</span>
+              </button>
+
               {msg && <div className="text-on-surface font-label-bold text-center mt-2 bg-surface-container-high border-2 border-black px-2 py-1 mx-auto brutal-shadow-sm">{msg}</div>}
 
               <div className="w-full flex justify-center mt-md">

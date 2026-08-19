@@ -1,9 +1,11 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { TemplateId, useSession } from '../../store/useSession'
 
 export function Settings({ onClose }: { onClose: () => void }) {
-  const { branding, template, bridgeUrl, setBranding, setTemplate, setBridgeUrl } = useSession()
+  const { branding, template, bridgeUrl, frames, setBranding, setTemplate, setBridgeUrl } = useSession()
   const fileRef = useRef<HTMLInputElement>(null)
+  const galleryRef = useRef<HTMLInputElement>(null)
+  const [galleryBusy, setGalleryBusy] = useState(false)
 
   function onLogo(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -11,6 +13,55 @@ export function Settings({ onClose }: { onClose: () => void }) {
     const reader = new FileReader()
     reader.onload = () => setBranding({ logoDataUrl: reader.result as string })
     reader.readAsDataURL(f)
+  }
+
+  async function onGallery(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setGalleryBusy(true)
+    try {
+      const uploaded: { id: string; name: string }[] = []
+      for (const f of files) {
+        const fd = new FormData()
+        fd.append('image', f)
+        fd.append('name', f.name.replace(/\.[^.]+$/, ''))
+        const res = await fetch('/api/frames', { method: 'POST', body: fd })
+        if (res.ok) uploaded.push(await res.json())
+      }
+      // Refresh gallery dari server.
+      const list = await (await fetch('/api/frames')).json()
+      useSession.getState().setFrames(
+        (list as { id: string; name: string }[]).map((x) => ({
+          id: x.id,
+          name: x.name,
+          url: `/api/frames/${x.id}`,
+        }))
+      )
+    } catch {
+      /* ignore */
+    } finally {
+      setGalleryBusy(false)
+      if (galleryRef.current) galleryRef.current.value = ''
+    }
+  }
+
+  async function removeFrame(id: string) {
+    try {
+      await fetch(`/api/frames/${id}`, { method: 'DELETE' })
+      if (useSession.getState().selectedFrameId === id) {
+        useSession.getState().setSelectedFrameId(null)
+      }
+      const list = await (await fetch('/api/frames')).json()
+      useSession.getState().setFrames(
+        (list as { id: string; name: string }[]).map((x) => ({
+          id: x.id,
+          name: x.name,
+          url: `/api/frames/${x.id}`,
+        }))
+      )
+    } catch {
+      /* ignore */
+    }
   }
 
   return (
@@ -88,6 +139,49 @@ export function Settings({ onClose }: { onClose: () => void }) {
             className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
           />
         </label>
+
+        {/* Gallery Bingkai Custom (simpan di DB, customer pilih di booth) */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+          Gallery Bingkai Custom
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              onClick={() => galleryRef.current?.click()}
+              className="px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container"
+            >
+              + Upload Bingkai
+            </button>
+            <input
+              ref={galleryRef}
+              type="file"
+              accept="image/png,image/*"
+              multiple
+              hidden
+              onChange={onGallery}
+            />
+          </div>
+          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+            Bisa upload lebih dari satu. Tersimpan di database & bisa dipilih customer di layar booth.
+          </span>
+          {galleryBusy && (
+            <span className="text-[10px] normal-case tracking-normal text-primary">Mengupload…</span>
+          )}
+          {frames.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {frames.map((f) => (
+                <div key={f.id} className="relative border-2 border-black bg-white">
+                  <img src={f.url} alt={f.name} className="h-14 w-11 object-contain" />
+                  <button
+                    onClick={() => removeFrame(f.id)}
+                    className="absolute -top-2 -right-2 w-6 h-6 flex items-center justify-center bg-error-container border-2 border-black text-on-error-container font-label-bold text-[12px]"
+                    title="Hapus"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* QR */}
         <label className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
