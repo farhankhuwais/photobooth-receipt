@@ -125,7 +125,7 @@
   <div class="card" id="hours">—</div>
   <h2>Transaksi Terakhir</h2>
   <table>
-    <thead><tr><th>Waktu</th><th>Metode</th><th>Template</th><th>Nominal</th></tr></thead>
+    <thead><tr><th>Waktu</th><th>Metode</th><th>Mode</th><th>Preset</th><th>Template</th><th>Nominal</th></tr></thead>
     <tbody id="rows"><tr><td colspan="4">memuat…</td></tr></tbody>
   </table>
 </div>
@@ -219,10 +219,18 @@ async function load() {
   if (to) qs.set('to', to)
   const label = filtered ? 'Periode' : 'Semua'
   try {
-    const [stats, tx] = await Promise.all([
+    const [stats, tx, config] = await Promise.all([
       fetch('/portal/api/stats').then(r => { if(!r.ok) throw new Error('stats '+r.status); return r.json() }),
-      fetch('/portal/api/transactions?' + qs.toString()).then(r => { if(!r.ok) throw new Error('tx '+r.status); return r.json() })
+      fetch('/portal/api/transactions?' + qs.toString()).then(r => { if(!r.ok) throw new Error('tx '+r.status); return r.json() }),
+      fetch('/api/config').then(r => r.json()).catch(() => ({}))
     ])
+    const mode = config.mode === 'event' ? 'event' : 'regular'
+    const modeLabel = mode === 'event' ? 'Event (Jasa)' : 'Regular'
+    const modeDesc = mode === 'event'
+      ? 'Booth branded acara, CETAK tanpa paywall (host bayar di awal)'
+      : `Booth reguler, CETAK bayar Rp ${Number(config.price || 0).toLocaleString('id-ID')} / lembar`
+    const evName = config.branding && config.branding.eventName ? config.branding.eventName : '—'
+    const presetName = config.preset_name || '—'
     const total = tx.length
     const amount = tx.reduce((a, t) => a + Number(t.amount || 0), 0)
     const qris = tx.filter(t => t.method === 'qris').length
@@ -234,7 +242,15 @@ async function load() {
       byHour[h] = (byHour[h] || 0) + 1
     }
     const hoursArr = Object.entries(byHour).map(([h, c]) => ({ hour: Number(h), cnt: c })).sort((a, b) => a.hour - b.hour)
-    document.getElementById('kpis').innerHTML = `
+    // Card status mode booth (type + keterangan + preset aktif).
+    const modeCard = `
+      <div class="card" style="grid-column:1/-1; border-color:${mode === 'event' ? '#7c3aed' : '#000'}; box-shadow:6px 6px 0 ${mode === 'event' ? '#7c3aed' : '#000'};">
+        <div class="label">Mode Booth Aktif</div>
+        <div class="val" style="font-size:24px;">${modeLabel}</div>
+        <div class="sub">${modeDesc}</div>
+        <div class="sub">Nama event: <b>${evName}</b> &nbsp;•&nbsp; Preset: <b>${presetName}</b></div>
+      </div>`
+    document.getElementById('kpis').innerHTML = modeCard + `
       <div class="card"><div class="label">Cetak (${label})</div><div class="val">${total}</div><div class="sub">total ${stats.summary.total_count}</div></div>
       <div class="card"><div class="label">Omzet (${label})</div><div class="val">${fmt(amount)}</div><div class="sub">total ${fmt(stats.summary.total_amount)}</div></div>
       <div class="card"><div class="label">QRIS (${label})</div><div class="val">${qris}</div><div class="sub">cetak ${label.toLowerCase()}</div></div>
@@ -244,8 +260,8 @@ async function load() {
       ? hoursArr.map(h => `${String(h.hour).padStart(2,'0')}:00 → ${h.cnt} cetak`).join('   •   ')
       : (filtered ? 'tidak ada transaksi di periode ini' : 'belum ada transaksi')
     document.getElementById('rows').innerHTML = tx.length
-      ? tx.map(t => `<tr><td>${fmtTime(t.created_at)}</td><td><span class="pill ${t.method}">${t.method}</span></td><td>${t.template||'-'}</td><td>${fmt(t.amount)}</td></tr>`).join('')
-      : '<tr><td colspan="4">belum ada transaksi</td></tr>'
+      ? tx.map(t => `<tr><td>${fmtTime(t.created_at)}</td><td><span class="pill ${t.method}">${t.method}</span></td><td>${t.mode === 'event' ? 'Event' : 'Regular'}</td><td>${t.preset || '-'}</td><td>${t.template||'-'}</td><td>${fmt(t.amount)}</td></tr>`).join('')
+      : '<tr><td colspan="6">belum ada transaksi</td></tr>'
   } catch (e) {
     if (String(e.message).includes('401')) {
       showLogin()

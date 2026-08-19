@@ -1,16 +1,46 @@
 import { useRef, useState } from 'react'
 import { TemplateId, useSession, AppMode } from '../../store/useSession'
 
-export function Settings({ onClose }: { onClose: () => void }) {
-  const { branding, template, bridgeUrl, frames, mode, price, activePresetName, setBranding, setTemplate, setBridgeUrl, setMode, setPrice, setActivePreset, applyConfig } = useSession()
+export function Settings({ onClose, onAttractChange }: { onClose: () => void; onAttractChange?: () => void }) {
+  const { branding, template, bridgeUrl, frames, mode, price, setBranding, setTemplate, setBridgeUrl, setMode, setPrice, applyConfig } = useSession()
   const fileRef = useRef<HTMLInputElement>(null)
   const galleryRef = useRef<HTMLInputElement>(null)
+  const attractRef = useRef<HTMLInputElement>(null)
+  const attractIconRef = useRef<HTMLInputElement>(null)
   const [galleryBusy, setGalleryBusy] = useState(false)
-  // Draft preset (mode + harga) sebelum disimpan/aktifkan.
-  const [presetName, setPresetName] = useState('')
-  const [draftMode, setDraftMode] = useState<AppMode>(mode)
-  const [draftPrice, setDraftPrice] = useState<number>(price)
+  const [attractBusy, setAttractBusy] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Mode yang lagi diedit di panel + preset yang dipilih (dropdown per-mode).
+  const [editMode, setEditMode] = useState<AppMode>(mode)
+  const [draftPrice, setDraftPrice] = useState<number>(price)
+  const [presets, setPresets] = useState<{ name: string; mode: string }[]>([])
+  const [selectedPreset, setSelectedPreset] = useState<string>('')
+  const [presetName, setPresetName] = useState('')
+
+  // Load daftar preset (filter per mode yang lagi diedit).
+  async function loadPresets(m: AppMode) {
+    try {
+      const rows = await (await fetch(`/api/presets?mode=${m}`)).json()
+      setPresets(Array.isArray(rows) ? rows : [])
+    } catch {
+      setPresets([])
+    }
+  }
+
+  // Pilih preset dari dropdown -> auto-isi field (branding + harga) + set sebagai aktif.
+  async function onPresetChange(name: string) {
+    setSelectedPreset(name)
+    if (!name) return
+    try {
+      const p = await (await fetch(`/api/presets/${encodeURIComponent(name)}`)).json()
+      if (p?.branding) {
+        useSession.getState().setBranding(p.branding)
+        setDraftPrice(p.mode === 'event' ? 0 : Number(p.price) || 5000)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 
   function onLogo(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -69,21 +99,90 @@ export function Settings({ onClose }: { onClose: () => void }) {
     }
   }
 
-  // Simpan preset (branding + mode + harga) ke DB. Bukan mengaktifkan booth.
-  async function savePresetNow() {
-    if (!presetName.trim()) return
+  // Upload background / ikon attract (per mode aktif) -> notify parent reload.
+  async function onAttractFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setAttractBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('media', f)
+      const res = await fetch(`/api/attract/${useSession.getState().mode}`, { method: 'POST', body: fd })
+      if (res.ok) onAttractChange?.()
+    } catch {
+      /* ignore */
+    } finally {
+      setAttractBusy(false)
+      if (attractRef.current) attractRef.current.value = ''
+    }
+  }
+
+  async function onAttractIconFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setAttractBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('image', f)
+      const res = await fetch(`/api/attract/${useSession.getState().mode}/icon`, { method: 'POST', body: fd })
+      if (res.ok) onAttractChange?.()
+    } catch {
+      /* ignore */
+    } finally {
+      setAttractBusy(false)
+      if (attractIconRef.current) attractIconRef.current.value = ''
+    }
+  }
+
+  async function deleteAttractBg() {
+    setAttractBusy(true)
+    try {
+      await fetch(`/api/attract/${useSession.getState().mode}`, { method: 'DELETE' })
+      onAttractChange?.()
+    } catch {
+      /* ignore */
+    } finally {
+      setAttractBusy(false)
+    }
+  }
+
+  async function deleteAttractIcon() {
+    setAttractBusy(true)
+    try {
+      await fetch(`/api/attract/${useSession.getState().mode}/icon`, { method: 'DELETE' })
+      onAttractChange?.()
+    } catch {
+      /* ignore */
+    } finally {
+      setAttractBusy(false)
+    }
+  }
+
+  // Ganti tab mode -> load dropdown preset mode itu + reset pilihan.
+  async function switchMode(m: AppMode) {
+    setEditMode(m)
+    setSelectedPreset('')
+    await loadPresets(m)
+  }
+
+  // Simpan config sekarang sebagai preset bernama (mode ikut editMode).
+  async function savePresetNamed() {
+    const nm = presetName.trim()
+    if (!nm) return
     setBusy(true)
     try {
       await fetch('/api/presets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: presetName.trim(),
-          mode: draftMode,
-          price: draftMode === 'event' ? 0 : draftPrice,
+          name: nm,
+          mode: editMode,
+          price: editMode === 'event' ? 0 : draftPrice,
           branding: useSession.getState().branding,
         }),
       })
+      setSelectedPreset(nm)
+      await loadPresets(editMode)
     } catch {
       /* ignore */
     } finally {
@@ -91,16 +190,16 @@ export function Settings({ onClose }: { onClose: () => void }) {
     }
   }
 
-  // Aktifkan config sekarang (mode/price/branding) + persist ke app_config.
-  function activateNow() {
-    setMode(draftMode)
-    setPrice(draftMode === 'event' ? 0 : draftPrice)
-    setActivePreset(presetName.trim() || null)
+  // Aktifkan config sekarang (mode/price/branding) + preset terpilih + persist.
+  function activateMode() {
+    setMode(editMode)
+    setPrice(editMode === 'event' ? 0 : draftPrice)
+    useSession.getState().setActivePreset(selectedPreset || null)
     applyConfig({
-      mode: draftMode,
-      price: draftMode === 'event' ? 0 : draftPrice,
+      mode: editMode,
+      price: editMode === 'event' ? 0 : draftPrice,
       branding: useSession.getState().branding,
-      presetName: presetName.trim() || null,
+      presetName: selectedPreset || null,
     })
   }
 
@@ -116,7 +215,7 @@ export function Settings({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center justify-between border-b-4 border-black pb-3">
           <h2 className="font-headline-md text-headline-md-mobile uppercase tracking-tight text-on-surface">
-            Pengaturan Event
+            Pengaturan
           </h2>
           <button
             onClick={onClose}
@@ -125,6 +224,66 @@ export function Settings({ onClose }: { onClose: () => void }) {
             <span className="material-symbols-outlined text-on-surface">close</span>
           </button>
         </div>
+
+        {/* Mode Booth: Regular vs Event — tab, masing-masing config terpisah */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+          Mode Booth
+          <div className="mt-1 flex gap-2">
+            {(['regular', 'event'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => switchMode(m)}
+                className={`flex-1 px-2 py-2 border-4 border-black text-xs font-label-bold uppercase neo-button brutal-shadow-sm transition-all duration-75 ${
+                  editMode === m
+                    ? 'bg-primary-container text-on-primary-container'
+                    : 'bg-surface text-on-surface hover:bg-surface-variant'
+                }`}
+              >
+                {m === 'regular' ? 'Regular (bayar/cetak)' : 'Event (jasa, gratis)'}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+            {editMode === 'event'
+              ? 'Booth branded acara, CETAK tanpa paywall (host bayar di awal).'
+              : 'Booth reguler, CETAK bayar per lembar.'}
+            {' '}Settingan tiap mode tersimpan sendiri di database.
+          </span>
+        </div>
+
+        {/* Dropdown preset per-mode — pilih config tersimpan, field auto-isi */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+          Preset {editMode === 'event' ? 'Event' : 'Regular'}
+          <select
+            value={selectedPreset}
+            onChange={(e) => onPresetChange(e.target.value)}
+            className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
+          >
+            <option value="">— Pilih preset / kosong —</option>
+            {presets.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}</option>
+            ))}
+          </select>
+          {presets.length === 0 && (
+            <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+              Belum ada preset {editMode === 'event' ? 'Event' : 'Regular'}. Isi field lalu Simpan di bawah.
+            </span>
+          )}
+        </div>
+
+        {/* Harga per cetak (regular) — HIDE di mode event */}
+        {editMode === 'regular' && (
+          <label className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+            Harga per cetak (Rp)
+            <input
+              type="number"
+              min={0}
+              value={draftPrice}
+              onChange={(e) => setDraftPrice(Number(e.target.value) || 0)}
+              className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
+            />
+          </label>
+        )}
 
         {/* Nama Event */}
         <label className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
@@ -167,6 +326,20 @@ export function Settings({ onClose }: { onClose: () => void }) {
             className="w-5 h-5 border-4 border-black accent-primary-container"
           />
           Tampilkan tanggal di struk
+        </label>
+
+        {/* Tampilkan nama event di hasil cetak */}
+        <label className="flex items-center gap-2 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+          <input
+            type="checkbox"
+            checked={branding.showEventNameOnPrint}
+            onChange={(e) => setBranding({ showEventNameOnPrint: e.target.checked })}
+            className="w-5 h-5 border-4 border-black accent-primary-container"
+          />
+          Tampilkan nama event di hasil cetak
+          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant font-body-md">
+            (matikan agar nama event tidak muncul di foto/struk)
+          </span>
         </label>
 
         {/* Watermark */}
@@ -265,72 +438,81 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        {/* Mode Booth: Regular vs Event */}
-        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
-          Mode Booth
-          <div className="mt-1 flex gap-2">
-            {(['regular', 'event'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setDraftMode(m)}
-                className={`flex-1 px-2 py-2 border-4 border-black text-xs font-label-bold uppercase neo-button brutal-shadow-sm transition-all duration-75 ${
-                  draftMode === m
-                    ? 'bg-primary-container text-on-primary-container'
-                    : 'bg-surface text-on-surface hover:bg-surface-variant'
-                }`}
-              >
-                {m === 'regular' ? 'Regular (bayar/cetak)' : 'Event (jasa, gratis)'}
-              </button>
-            ))}
-          </div>
+        {/* Layar Awal (Attract) — background + ikon sentuh per mode */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px] border-t-4 border-black pt-3">
+          Layar Awal (Attract) — mode {mode === 'event' ? 'Event' : 'Regular'}
           <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
-            {draftMode === 'event'
-              ? 'Booth branded acara, CETAK tanpa paywall (host bayar di awal).'
-              : 'Booth reguler, CETAK bayar per lembar.'}
+            Background & ikon untuk layar "Sentuh untuk mulai". Tersimpan di DB, otomatis tiap mode.
           </span>
+          <div className="mt-1 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => attractRef.current?.click()}
+                className="px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container"
+              >
+                + Background (Gambar/Video)
+              </button>
+              <button
+                onClick={deleteAttractBg}
+                className="px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase neo-button brutal-shadow-sm"
+              >
+                Hapus BG
+              </button>
+              <input ref={attractRef} type="file" accept="image/*,video/*" hidden onChange={onAttractFile} />
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => attractIconRef.current?.click()}
+                className="px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container"
+              >
+                + Ganti Ikon Sentuh
+              </button>
+              <button
+                onClick={deleteAttractIcon}
+                className="px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase neo-button brutal-shadow-sm"
+              >
+                Reset Ikon
+              </button>
+              <input ref={attractIconRef} type="file" accept="image/*" hidden onChange={onAttractIconFile} />
+            </div>
+            {attractBusy && (
+              <span className="text-[10px] normal-case tracking-normal text-primary">Mengupload…</span>
+            )}
+            <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+              Ikon: PNG transparan 120×120. Background: 1920×1080 (video &lt;10MB).
+            </span>
+          </div>
         </div>
 
-        {/* Harga per cetak (regular) */}
-        {draftMode === 'regular' && (
-          <label className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
-            Harga per cetak (Rp)
+        {/* Simpan preset bernama + Aktifkan */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px] border-t-4 border-black pt-3">
+          <label className="flex flex-col gap-1">
+            Nama Preset (untuk disimpan)
             <input
-              type="number"
-              min={0}
-              value={draftPrice}
-              onChange={(e) => setDraftPrice(Number(e.target.value) || 0)}
-              className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              placeholder="cth: Wedding Budi & Siti"
+              className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high normal-case tracking-normal"
             />
           </label>
-        )}
-
-        {/* Simpan / Aktifkan preset */}
-        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
-          Preset (simpan konfigurasi)
-          <input
-            value={presetName}
-            onChange={(e) => setPresetName(e.target.value)}
-            placeholder="cth: Wedding Budi & Siti"
-            className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
-          />
           <div className="mt-1 flex gap-2">
             <button
-              onClick={savePresetNow}
+              onClick={savePresetNamed}
               disabled={busy || !presetName.trim()}
               className="flex-1 px-3 py-2 border-4 border-black bg-surface-variant text-on-surface font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container-high disabled:opacity-50"
             >
               {busy ? 'Menyimpan…' : 'Simpan Preset'}
             </button>
             <button
-              onClick={activateNow}
+              onClick={activateMode}
               className="flex-1 px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container"
             >
               Aktifkan Sekarang
             </button>
           </div>
-          {activePresetName && (
+          {mode === editMode && selectedPreset && (
             <span className="text-[10px] normal-case tracking-normal text-primary">
-              Aktif: {activePresetName} ({mode === 'event' ? 'Event' : 'Regular'})
+              Aktif: {selectedPreset} ({editMode === 'event' ? 'Event' : 'Regular'})
             </span>
           )}
         </div>

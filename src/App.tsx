@@ -23,15 +23,10 @@ export default function App() {
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
-  const [showModeMenu, setShowModeMenu] = useState(false)
   const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
-  const [attractBusy, setAttractBusy] = useState(false)
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
   const running = useRef(false)
-  const modeMenuRef = useRef<HTMLDivElement>(null)
-  const attractRef = useRef<HTMLInputElement>(null)
-  const attractIconRef = useRef<HTMLInputElement>(null)
 
   // Load background attract untuk mode saat ini (regular/event) dari DB.
   function loadAttract(m: 'regular' | 'event') {
@@ -51,24 +46,6 @@ export default function App() {
       .catch(() => {})
   }
 
-  // Upload background attract untuk mode tertentu.
-  async function onAttractFile(e: React.ChangeEvent<HTMLInputElement>, m: 'regular' | 'event') {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setAttractBusy(true)
-    try {
-      const fd = new FormData()
-      fd.append('media', f)
-      const res = await fetch(`/api/attract/${m}`, { method: 'POST', body: fd })
-      if (res.ok) loadAttract(m)
-    } catch {
-      /* ignore */
-    } finally {
-      setAttractBusy(false)
-      if (attractRef.current) attractRef.current.value = ''
-    }
-  }
-
   // Load ikon tap custom per mode dari DB.
   function loadAttractIcon(m: 'regular' | 'event') {
     fetch(`/api/attract/${m}/icon`)
@@ -80,35 +57,12 @@ export default function App() {
       .catch(() => {})
   }
 
-  // Upload ikon tap custom per mode.
-  async function onAttractIconFile(e: React.ChangeEvent<HTMLInputElement>, m: 'regular' | 'event') {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setAttractBusy(true)
-    try {
-      const fd = new FormData()
-      fd.append('image', f)
-      const res = await fetch(`/api/attract/${m}/icon`, { method: 'POST', body: fd })
-      if (res.ok) loadAttractIcon(m)
-    } catch {
-      /* ignore */
-    } finally {
-      setAttractBusy(false)
-      const ref = e.target
-      if (ref) ref.value = ''
-    }
+  // Reload background + ikon attract setelah diubah di panel Settings.
+  function reloadAttract() {
+    const m = useSession.getState().mode
+    loadAttract(m)
+    loadAttractIcon(m)
   }
-
-  // Tutup menu mode kalau klik di luar.
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) {
-        setShowModeMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [])
 
   // Load attract background + ikon saat mode berubah / boot.
   useEffect(() => {
@@ -357,100 +311,15 @@ export default function App() {
           {/* Overlay tipis biar teks tetap kebaca tanpa menutupi background */}
           <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/25 via-black/10 to-black/35 pointer-events-none"></div>
 
-          {/* Tombol mode pojok kanan atas */}
-          <div className="absolute top-sm right-sm z-30" ref={modeMenuRef}>
+          {/* Tombol Pengaturan pojok kanan atas (satu pintu semua setting) */}
+          <div className="absolute top-sm right-sm z-30">
             <button
-              onClick={() => setShowModeMenu((v) => !v)}
-              className="flex items-center gap-2 px-3 py-2 border-4 border-black bg-surface text-on-surface font-label-bold uppercase text-[12px] brutal-shadow-sm hover:bg-surface-variant"
-              title="Pilih Mode"
+              onClick={() => setShowSettings(true)}
+              className="flex items-center justify-center w-12 h-12 border-4 border-black bg-surface text-on-surface brutal-shadow-sm hover:bg-surface-variant"
+              title="Pengaturan"
             >
-              <span className="material-symbols-outlined text-[20px]">tune</span>
-              {mode === 'event' ? 'Event' : 'Regular'}
+              <span className="material-symbols-outlined text-[24px]">settings</span>
             </button>
-            {showModeMenu && (
-              <div className="absolute right-0 mt-2 w-60 bg-surface border-4 border-black brutal-shadow p-3 flex flex-col gap-2 z-40">
-                <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[11px]">Pilih Mode Booth</span>
-                {(['regular', 'event'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => {
-                      useSession.getState().setMode(m)
-                      setShowModeMenu(false)
-                    }}
-                    className={`px-3 py-2 border-4 border-black font-label-bold uppercase text-[12px] neo-button ${mode === m ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
-                  >
-                    {m === 'event' ? 'Event (jasa)' : 'Regular (per cetak)'}
-                  </button>
-                ))}
-                <div className="border-t-2 border-black pt-2 mt-1">
-                  <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Background layar ini</span>
-                  <div className="mt-1 flex items-center gap-2">
-                    <button
-                      onClick={() => attractRef.current?.click()}
-                      className="px-2 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase text-[11px] neo-button"
-                    >
-                      + Gambar/Video
-                    </button>
-                    {attractMedia && (
-                      <button
-                        onClick={async () => {
-                          await fetch(`/api/attract/${mode}`, { method: 'DELETE' }).catch(() => {})
-                          setAttractMedia(null)
-                        }}
-                        className="px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase text-[11px] neo-button"
-                      >
-                        Hapus
-                      </button>
-                    )}
-                    <input
-                      ref={attractRef}
-                      type="file"
-                      accept="image/*,video/*"
-                      hidden
-                      onChange={(e) => onAttractFile(e, mode)}
-                    />
-                  </div>
-                  {attractBusy && (
-                    <span className="text-[10px] normal-case text-primary">Mengupload…</span>
-                  )}
-                  <span className="text-[10px] normal-case text-on-surface-variant">
-                    Tersimpan di DB, otomatis tiap mode.
-                  </span>
-                </div>
-                <div className="border-t-2 border-black pt-2 mt-1">
-                  <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Ikon "Sentuh"</span>
-                  <div className="mt-1 flex items-center gap-2">
-                    <button
-                      onClick={() => attractIconRef.current?.click()}
-                      className="px-2 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase text-[11px] neo-button"
-                    >
-                      + Ganti Ikon
-                    </button>
-                    {attractIcon && (
-                      <button
-                        onClick={async () => {
-                          await fetch(`/api/attract/${mode}/icon`, { method: 'DELETE' }).catch(() => {})
-                          setAttractIcon(null)
-                        }}
-                        className="px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase text-[11px] neo-button"
-                      >
-                        Reset
-                      </button>
-                    )}
-                    <input
-                      ref={attractIconRef}
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      onChange={(e) => onAttractIconFile(e, mode)}
-                    />
-                  </div>
-                  <span className="text-[10px] normal-case text-on-surface-variant">
-                    PNG transparan 120×120, pakai default kalau kosong.
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
           <button
@@ -488,9 +357,7 @@ export default function App() {
               <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
               <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">{branding.eventName}</span>
             </div>
-            <button onClick={() => setShowSettings(true)} className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm">
-              <span className="material-symbols-outlined text-on-surface">settings</span>
-            </button>
+            <div className="w-10 h-10" />
           </header>
 
           {error && (
@@ -745,7 +612,7 @@ export default function App() {
         </div>
       )}
 
-      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showSettings && <Settings onClose={() => setShowSettings(false)} onAttractChange={reloadAttract} />}
     </div>
   )
 }

@@ -20,6 +20,8 @@ export interface BrandingConfig {
   watermark: string
   qrText: string
   frame: FrameId
+  // Tampilkan nama event di HASIL CETAK (header + frame vintage). Attract tetap pakai eventName.
+  showEventNameOnPrint: boolean
 }
 
 export type SessionStatus = 'idle' | 'capturing' | 'done'
@@ -74,13 +76,14 @@ interface SessionState {
 
 const countFor = (t: TemplateId) => (t === 'grid2x2' ? 4 : t === 'single' ? 1 : 3)
 
-const DEFAULT_BRANDING: BrandingConfig = {
+export const DEFAULT_BRANDING: BrandingConfig = {
   eventName: 'My Event',
   logoDataUrl: null,
   showDate: true,
   watermark: '',
   qrText: '',
   frame: 'none',
+  showEventNameOnPrint: true,
 }
 
 function loadBranding(): BrandingConfig {

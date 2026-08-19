@@ -57,12 +57,10 @@ export async function initDb() {
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS presets (
-      id          SERIAL PRIMARY KEY,
-      name        TEXT NOT NULL UNIQUE,
+      name        TEXT PRIMARY KEY,
       mode        TEXT NOT NULL DEFAULT 'regular',
       price       INTEGER NOT NULL DEFAULT 5000,
       branding    JSONB NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS transactions (
@@ -136,15 +134,29 @@ export async function initDb() {
   await migrate()
 }
 
-// Migrasi kolom baru ke tabel yang SUDAH ada (CREATE IF NOT EXISTS tidak menambah kolom).
+// Migrasi: pastikan presets punya kolom name (PK). Versi per-mode lama pakai mode PK.
 export async function migrate() {
   await pool.query(`
-    ALTER TABLE presets
-      ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'regular',
-      ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 5000;
-    ALTER TABLE transactions
-      ADD COLUMN IF NOT EXISTS preset TEXT,
-      ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'regular';
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns WHERE table_name='presets' AND column_name='name'
+      ) THEN
+        CREATE TABLE IF NOT EXISTS presets_new (
+          name TEXT PRIMARY KEY,
+          mode TEXT NOT NULL DEFAULT 'regular',
+          price INTEGER NOT NULL DEFAULT 5000,
+          branding JSONB NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        INSERT INTO presets_new (name, mode, price, branding, updated_at)
+          SELECT COALESCE(mode, 'regular'), mode, price, branding, COALESCE(updated_at, now())
+          FROM presets
+          ON CONFLICT (name) DO NOTHING;
+        DROP TABLE presets;
+        ALTER TABLE presets_new RENAME TO presets;
+      END IF;
+    END $$;
   `)
 }
 
@@ -252,24 +264,37 @@ export async function getPhoto(id) {
   return r.rows[0]?.data || null
 }
 
+// ── Presets (konfigurasi bernama, bisa banyak) — tiap preset punya mode sendiri ──
+// Dropdown di panel memfilter preset per mode -> masing-masing config TERPISAH & persist.
 export async function savePreset(name, mode, price, branding) {
+  const n = String(name || '').trim()
+  if (!n) throw new Error('nama preset wajib')
+  const m = mode === 'event' ? 'event' : 'regular'
+  const p = m === 'event' ? 0 : (price === 0 ? 0 : Number(price) || 5000)
   const r = await pool.query(
     `INSERT INTO presets (name, mode, price, branding, updated_at) VALUES ($1, $2, $3, $4, now())
      ON CONFLICT (name) DO UPDATE SET mode = EXCLUDED.mode, price = EXCLUDED.price, branding = EXCLUDED.branding, updated_at = now()
-     RETURNING id`,
-    [name, mode, price, branding]
+     RETURNING name`,
+    [n, m, p, branding]
   )
-  return r.rows[0].id
+  return r.rows[0].name
 }
 
+// Semua preset sebagai array { name, mode, price, branding }, terbaru dulu.
 export async function listPresets() {
-  const r = await pool.query('SELECT id, name, mode, price, branding, updated_at FROM presets ORDER BY updated_at DESC')
+  const r = await pool.query('SELECT name, mode, price, branding FROM presets ORDER BY updated_at DESC')
   return r.rows
 }
 
+// Ambil satu preset by name.
 export async function getPreset(name) {
-  const r = await pool.query('SELECT mode, price, branding FROM presets WHERE name = $1', [name])
+  const r = await pool.query('SELECT name, mode, price, branding FROM presets WHERE name = $1', [name])
   return r.rows[0] || null
+}
+
+// Hapus preset by name.
+export async function deletePreset(name) {
+  await pool.query('DELETE FROM presets WHERE name = $1', [name])
 }
 
 // ── Active app config (persisted, survives refresh/cache clear) ──

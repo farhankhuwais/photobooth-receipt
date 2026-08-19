@@ -14,7 +14,7 @@ import multer from 'multer'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon } from './db.mjs'
+import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -53,32 +53,48 @@ app.get('/u/:id', async (req, res) => {
   }
 })
 
-// Event branding presets (server-side, replaces localStorage-only storage)
+// Presets — konfigurasi bernama (bisa banyak), tiap preset punya mode sendiri.
 app.post('/api/presets', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     const { name, mode, price, branding } = req.body || {}
-    if (!name) return res.status(400).json({ error: 'no name' })
+    const nm = String(name || '').trim()
+    if (!nm) return res.status(400).json({ error: 'nama preset wajib' })
     const m = mode === 'event' ? 'event' : 'regular'
-    const p = Number(price)
-    const finalPrice = m === 'event' ? 0 : (p === 0 ? 0 : p || 5000)
-    const id = await savePreset(name, m, finalPrice, branding ?? {})
-    res.json({ id, name })
+    const p = m === 'event' ? 0 : (price === 0 ? 0 : Number(price) || 5000)
+    const saved = await savePreset(nm, m, p, branding ?? {})
+    res.json({ ok: true, name: saved, mode: m })
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
 })
-app.get('/api/presets', async (_req, res) => {
+// List preset (array). ?mode=regular|event untuk filter per mode.
+app.get('/api/presets', async (req, res) => {
   try {
-    res.json(await listPresets())
+    let rows = await listPresets()
+    const mode = req.query.mode
+    if (mode === 'regular' || mode === 'event') {
+      rows = rows.filter((r) => r.mode === mode)
+    }
+    res.json(rows)
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
 })
+// Ambil satu preset by name.
 app.get('/api/presets/:name', async (req, res) => {
   try {
     const p = await getPreset(req.params.name)
     if (!p) return res.status(404).json({ error: 'not found' })
     res.json(p)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Hapus preset by name.
+app.delete('/api/presets/:name', async (req, res) => {
+  try {
+    await deletePreset(req.params.name)
+    res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }

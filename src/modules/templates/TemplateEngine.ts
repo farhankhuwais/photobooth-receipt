@@ -167,7 +167,7 @@ export async function composeStrip(
     if (ar > 1) dh = box / ar
     else dw = box * ar
     ctx.drawImage(logo, lx + (box - dw) / 2, ly + (box - dh) / 2, dw, dh)
-    if (branding.eventName) {
+    if (branding.eventName && branding.showEventNameOnPrint) {
       ctx.fillStyle = '#000000'
       ctx.font = 'bold 24px sans-serif'
       ctx.textBaseline = 'alphabetic'
@@ -175,7 +175,7 @@ export async function composeStrip(
     }
   } else {
     ctx.font = 'bold 30px sans-serif'
-    if (branding.eventName) ctx.fillText(branding.eventName, PRINT_WIDTH / 2, headerH / 2)
+    if (branding.eventName && branding.showEventNameOnPrint) ctx.fillText(branding.eventName, PRINT_WIDTH / 2, headerH / 2)
   }
 
   let i = 0
@@ -209,8 +209,9 @@ export async function composeStrip(
     ctx.fillText(branding.watermark, PRINT_WIDTH / 2, canvas.height - 14)
   }
 
-  // Frame bawaan digambar (kecuali 'none').
-  drawFrame(ctx, branding.frame, canvas.width, canvas.height, branding.eventName)
+  // Frame bawaan digambar (kecuali 'none'). Nama event di frame mengikuti toggle cetak.
+  const frameEventName = branding.showEventNameOnPrint ? branding.eventName : ''
+  drawFrame(ctx, branding.frame, canvas.width, canvas.height, frameEventName)
   // Frame gallery custom (dari DB) — customer pilih 1 di layar booth.
   const sel = selectedFrameId ? frames.find((f) => f.id === selectedFrameId) : null
   if (sel) {
