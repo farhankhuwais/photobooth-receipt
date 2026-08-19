@@ -44,3 +44,20 @@ body {
   animation: pulse-scale 1s infinite cubic-bezier(0.4, 0, 0.2, 1);
   text-shadow: 0 0 20px #ffff00, 0 0 40px #ffff00;
 }
+
+/* Layar attract: teks "Sentuh untuk mulai" berdenyut pelan + panah ketuk muncul-ilang */
+@keyframes attract-beat {
+  0%, 100% { transform: scale(1); opacity: 0.92; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+.attract-beat {
+  animation: attract-beat 2.4s ease-in-out infinite;
+}
+
+@keyframes attract-hint {
+  0%, 100% { transform: translateY(0); opacity: 0.35; }
+  50% { transform: translateY(10px); opacity: 1; }
+}
+.attract-hint {
+  animation: attract-hint 1.8s ease-in-out infinite;
+}

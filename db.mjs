@@ -24,6 +24,16 @@ async function readPw() {
 
 const SESSION_DAYS = 30
 
+// Config default yang di-seed ke app_config(id=1) saat DB pertama kali init.
+const DEFAULT_CONFIG = {
+  eventName: 'My Event',
+  logoDataUrl: null,
+  showDate: true,
+  watermark: '',
+  qrText: '',
+  frame: 'none',
+}
+
 // ── Admin auth (model like kontrakan: scrypt + DB session) ────────────────
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex')
@@ -49,6 +59,8 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS presets (
       id          SERIAL PRIMARY KEY,
       name        TEXT NOT NULL UNIQUE,
+      mode        TEXT NOT NULL DEFAULT 'regular',
+      price       INTEGER NOT NULL DEFAULT 5000,
       branding    JSONB NOT NULL,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -59,7 +71,29 @@ export async function initDb() {
       method      TEXT NOT NULL,
       amount      INTEGER NOT NULL,
       template    TEXT,
-      note        TEXT
+      note        TEXT,
+      preset      TEXT,
+      mode        TEXT NOT NULL DEFAULT 'regular'
+    );
+    CREATE TABLE IF NOT EXISTS app_config (
+      id          INTEGER PRIMARY KEY DEFAULT 1,
+      mode        TEXT NOT NULL DEFAULT 'regular',
+      price       INTEGER NOT NULL DEFAULT 5000,
+      preset_name TEXT,
+      branding    JSONB NOT NULL,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS attract_assets (
+      mode        TEXT PRIMARY KEY,
+      media_type  TEXT NOT NULL,
+      data        BYTEA NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS attract_icons (
+      mode        TEXT PRIMARY KEY,
+      media_type  TEXT NOT NULL,
+      data        BYTEA NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE IF NOT EXISTS admin_user (
       id              SERIAL PRIMARY KEY,
@@ -88,7 +122,30 @@ export async function initDb() {
     await pool.query('INSERT INTO admin_user (email, password_hash) VALUES ($1, $2)', [email, hash])
     console.log(`[db] seeded admin user: ${email} (ganti password via env ADMIN_PASSWORD)`)
   }
+  // Seed default active config (row id=1) kalau belum ada.
+  const { rows: cf } = await pool.query('SELECT COUNT(*)::int AS c FROM app_config')
+  if (cf[0].c === 0) {
+    await pool.query(
+      `INSERT INTO app_config (id, mode, price, preset_name, branding)
+       VALUES (1, 'regular', 5000, NULL, $1)`,
+      [JSON.stringify(DEFAULT_CONFIG)]
+    )
+    console.log('[db] seeded default app_config (regular)')
+  }
   console.log('[db] schema ready')
+  await migrate()
+}
+
+// Migrasi kolom baru ke tabel yang SUDAH ada (CREATE IF NOT EXISTS tidak menambah kolom).
+export async function migrate() {
+  await pool.query(`
+    ALTER TABLE presets
+      ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'regular',
+      ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 5000;
+    ALTER TABLE transactions
+      ADD COLUMN IF NOT EXISTS preset TEXT,
+      ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'regular';
+  `)
 }
 
 export async function verifyAdmin(email, password) {
@@ -127,10 +184,10 @@ export async function destroySession(token) {
   await pool.query('DELETE FROM admin_sessions WHERE token = $1', [token])
 }
 
-export async function saveTransaction({ method, amount, template = null, note = null }) {
+export async function saveTransaction({ method, amount, template = null, note = null, preset = null, mode = 'regular' }) {
   const r = await pool.query(
-    'INSERT INTO transactions (method, amount, template, note) VALUES ($1, $2, $3, $4) RETURNING id, created_at',
-    [method, amount, template, note]
+    'INSERT INTO transactions (method, amount, template, note, preset, mode) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at',
+    [method, amount, template, note, preset, mode]
   )
   return r.rows[0]
 }
@@ -143,7 +200,7 @@ export async function listTransactions({ limit = 200, from = null, to = null } =
   if (from) { params.push(`${from} 00:00:00`); where.push(`created_at >= $${params.length}`) }
   if (to) { params.push(`${to} 23:59:59`); where.push(`created_at <= $${params.length}`) }
   params.push(Math.min(limit, 100000))
-  const sql = `SELECT id, created_at, method, amount, template, note FROM transactions
+  const sql = `SELECT id, created_at, method, amount, template, note, preset, mode FROM transactions
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY created_at DESC LIMIT $${params.length}`
   const r = await pool.query(sql, params)
@@ -195,24 +252,40 @@ export async function getPhoto(id) {
   return r.rows[0]?.data || null
 }
 
-export async function savePreset(name, branding) {
+export async function savePreset(name, mode, price, branding) {
   const r = await pool.query(
-    `INSERT INTO presets (name, branding, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (name) DO UPDATE SET branding = EXCLUDED.branding, updated_at = now()
+    `INSERT INTO presets (name, mode, price, branding, updated_at) VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (name) DO UPDATE SET mode = EXCLUDED.mode, price = EXCLUDED.price, branding = EXCLUDED.branding, updated_at = now()
      RETURNING id`,
-    [name, branding]
+    [name, mode, price, branding]
   )
   return r.rows[0].id
 }
 
 export async function listPresets() {
-  const r = await pool.query('SELECT id, name, branding, updated_at FROM presets ORDER BY updated_at DESC')
+  const r = await pool.query('SELECT id, name, mode, price, branding, updated_at FROM presets ORDER BY updated_at DESC')
   return r.rows
 }
 
 export async function getPreset(name) {
-  const r = await pool.query('SELECT branding FROM presets WHERE name = $1', [name])
-  return r.rows[0]?.branding || null
+  const r = await pool.query('SELECT mode, price, branding FROM presets WHERE name = $1', [name])
+  return r.rows[0] || null
+}
+
+// ── Active app config (persisted, survives refresh/cache clear) ──
+export async function getConfig() {
+  const r = await pool.query('SELECT mode, price, preset_name, branding FROM app_config WHERE id = 1')
+  return r.rows[0] || null
+}
+
+export async function saveConfig(config) {
+  const { mode, price, preset_name, branding } = config
+  await pool.query(
+    `INSERT INTO app_config (id, mode, price, preset_name, branding, updated_at)
+     VALUES (1, $1, $2, $3, $4, now())
+     ON CONFLICT (id) DO UPDATE SET mode = EXCLUDED.mode, price = EXCLUDED.price, preset_name = EXCLUDED.preset_name, branding = EXCLUDED.branding, updated_at = now()`,
+    [mode, price, preset_name, branding]
+  )
 }
 
 // ── Custom frame gallery (stored in Postgres, selectable by customer) ──────
@@ -237,6 +310,42 @@ export async function getFrame(id) {
 
 export async function deleteFrame(id) {
   await pool.query('DELETE FROM frames WHERE id = $1', [id])
+}
+
+// ── Attract screen background (image/video) per mode, stored in Postgres ──
+export async function saveAttract(mode, mediaType, buf) {
+  await pool.query(
+    `INSERT INTO attract_assets (mode, media_type, data, created_at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (mode) DO UPDATE SET media_type = EXCLUDED.media_type, data = EXCLUDED.data, created_at = now()`,
+    [mode, mediaType, buf]
+  )
+}
+
+export async function getAttract(mode) {
+  const r = await pool.query('SELECT media_type, data FROM attract_assets WHERE mode = $1', [mode])
+  return r.rows[0] || null
+}
+
+export async function deleteAttract(mode) {
+  await pool.query('DELETE FROM attract_assets WHERE mode = $1', [mode])
+}
+
+// ── Attract tap icon (custom PNG per mode) ──
+export async function saveAttractIcon(mode, mediaType, buf) {
+  await pool.query(
+    `INSERT INTO attract_icons (mode, media_type, data, created_at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (mode) DO UPDATE SET media_type = EXCLUDED.media_type, data = EXCLUDED.data, created_at = now()`,
+    [mode, mediaType, buf]
+  )
+}
+
+export async function getAttractIcon(mode) {
+  const r = await pool.query('SELECT media_type, data FROM attract_icons WHERE mode = $1', [mode])
+  return r.rows[0] || null
+}
+
+export async function deleteAttractIcon(mode) {
+  await pool.query('DELETE FROM attract_icons WHERE mode = $1', [mode])
 }
 
 export default pool

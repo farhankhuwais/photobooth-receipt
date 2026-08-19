@@ -4,6 +4,7 @@ export type TemplateId = 'strip3' | 'grid2x2' | 'single'
 export type FrameId = 'none' | 'love' | 'party' | 'vintage' | 'neon' | 'floral'
 export type Screen = 'attract' | 'booth'
 export type PaymentMethod = 'qris' | 'cash'
+export type AppMode = 'regular' | 'event'
 
 // Satu frame custom yang tersimpan di DB (gallery). `url` = endpoint blob PNG.
 export interface FrameDef {
@@ -32,6 +33,10 @@ interface SessionState {
   // Gallery frame custom (dari DB) + pilihan customer.
   frames: FrameDef[]
   selectedFrameId: string | null
+  // Mode booth: 'regular' (bayar per cetak) atau 'event' (jasa, gratis/tanpa paywall).
+  mode: AppMode
+  price: number
+  activePresetName: string | null
   status: SessionStatus
   screen: Screen
   paid: boolean
@@ -47,6 +52,11 @@ interface SessionState {
   setBranding: (b: Partial<BrandingConfig>) => void
   setFrames: (f: FrameDef[]) => void
   setSelectedFrameId: (id: string | null) => void
+  setMode: (m: AppMode) => void
+  setPrice: (p: number) => void
+  setActivePreset: (name: string | null) => void
+  // Terapkan + simpan config (mode/price/branding/preset) ke DB.
+  applyConfig: (cfg: { mode: AppMode; price: number; branding: Partial<BrandingConfig>; presetName: string | null }) => void
   setStatus: (s: SessionStatus) => void
   setScreen: (s: Screen) => void
   setPaid: (p: boolean) => void
@@ -99,6 +109,9 @@ export const useSession = create<SessionState>((set) => ({
   branding: loadBranding(),
   frames: [],
   selectedFrameId: null,
+  mode: 'regular',
+  price: 5000,
+  activePresetName: null,
   status: 'idle',
   screen: 'attract',
   paid: false,
@@ -114,6 +127,33 @@ export const useSession = create<SessionState>((set) => ({
   setBranding: (b) => set((s) => ({ branding: { ...s.branding, ...b } })),
   setFrames: (frames) => set({ frames }),
   setSelectedFrameId: (id) => set({ selectedFrameId: id }),
+  setMode: (mode) => set({ mode }),
+  setPrice: (price) => set({ price }),
+  setActivePreset: (name) => set({ activePresetName: name }),
+  // Terapkan config ke store + persist ke DB (survive refresh).
+  applyConfig: ({ mode, price, branding, presetName }) => {
+    set((s) => ({
+      mode,
+      price,
+      activePresetName: presetName,
+      branding: { ...s.branding, ...branding },
+    }))
+    // Simpan ke app_config (row id=1). Fire-and-forget; error di-log di console.
+    try {
+      fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          price,
+          preset_name: presetName,
+          branding: { ...useSession.getState().branding },
+        }),
+      }).catch(() => {})
+    } catch {
+      /* ignore */
+    }
+  },
   setStatus: (status) => set({ status }),
   setScreen: (screen) => set({ screen }),
   setPaid: (paid) => set({ paid }),

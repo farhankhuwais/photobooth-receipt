@@ -1,11 +1,16 @@
 import { useRef, useState } from 'react'
-import { TemplateId, useSession } from '../../store/useSession'
+import { TemplateId, useSession, AppMode } from '../../store/useSession'
 
 export function Settings({ onClose }: { onClose: () => void }) {
-  const { branding, template, bridgeUrl, frames, setBranding, setTemplate, setBridgeUrl } = useSession()
+  const { branding, template, bridgeUrl, frames, mode, price, activePresetName, setBranding, setTemplate, setBridgeUrl, setMode, setPrice, setActivePreset, applyConfig } = useSession()
   const fileRef = useRef<HTMLInputElement>(null)
   const galleryRef = useRef<HTMLInputElement>(null)
   const [galleryBusy, setGalleryBusy] = useState(false)
+  // Draft preset (mode + harga) sebelum disimpan/aktifkan.
+  const [presetName, setPresetName] = useState('')
+  const [draftMode, setDraftMode] = useState<AppMode>(mode)
+  const [draftPrice, setDraftPrice] = useState<number>(price)
+  const [busy, setBusy] = useState(false)
 
   function onLogo(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -62,6 +67,41 @@ export function Settings({ onClose }: { onClose: () => void }) {
     } catch {
       /* ignore */
     }
+  }
+
+  // Simpan preset (branding + mode + harga) ke DB. Bukan mengaktifkan booth.
+  async function savePresetNow() {
+    if (!presetName.trim()) return
+    setBusy(true)
+    try {
+      await fetch('/api/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: presetName.trim(),
+          mode: draftMode,
+          price: draftMode === 'event' ? 0 : draftPrice,
+          branding: useSession.getState().branding,
+        }),
+      })
+    } catch {
+      /* ignore */
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Aktifkan config sekarang (mode/price/branding) + persist ke app_config.
+  function activateNow() {
+    setMode(draftMode)
+    setPrice(draftMode === 'event' ? 0 : draftPrice)
+    setActivePreset(presetName.trim() || null)
+    applyConfig({
+      mode: draftMode,
+      price: draftMode === 'event' ? 0 : draftPrice,
+      branding: useSession.getState().branding,
+      presetName: presetName.trim() || null,
+    })
   }
 
   return (
@@ -225,8 +265,78 @@ export function Settings({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* Mode Booth: Regular vs Event */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+          Mode Booth
+          <div className="mt-1 flex gap-2">
+            {(['regular', 'event'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setDraftMode(m)}
+                className={`flex-1 px-2 py-2 border-4 border-black text-xs font-label-bold uppercase neo-button brutal-shadow-sm transition-all duration-75 ${
+                  draftMode === m
+                    ? 'bg-primary-container text-on-primary-container'
+                    : 'bg-surface text-on-surface hover:bg-surface-variant'
+                }`}
+              >
+                {m === 'regular' ? 'Regular (bayar/cetak)' : 'Event (jasa, gratis)'}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+            {draftMode === 'event'
+              ? 'Booth branded acara, CETAK tanpa paywall (host bayar di awal).'
+              : 'Booth reguler, CETAK bayar per lembar.'}
+          </span>
+        </div>
+
+        {/* Harga per cetak (regular) */}
+        {draftMode === 'regular' && (
+          <label className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+            Harga per cetak (Rp)
+            <input
+              type="number"
+              min={0}
+              value={draftPrice}
+              onChange={(e) => setDraftPrice(Number(e.target.value) || 0)}
+              className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
+            />
+          </label>
+        )}
+
+        {/* Simpan / Aktifkan preset */}
+        <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
+          Preset (simpan konfigurasi)
+          <input
+            value={presetName}
+            onChange={(e) => setPresetName(e.target.value)}
+            placeholder="cth: Wedding Budi & Siti"
+            className="mt-1 w-full border-4 border-black bg-surface-container-lowest px-3 py-2 text-on-surface font-body-md outline-none focus:bg-surface-container-high"
+          />
+          <div className="mt-1 flex gap-2">
+            <button
+              onClick={savePresetNow}
+              disabled={busy || !presetName.trim()}
+              className="flex-1 px-3 py-2 border-4 border-black bg-surface-variant text-on-surface font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container-high disabled:opacity-50"
+            >
+              {busy ? 'Menyimpan…' : 'Simpan Preset'}
+            </button>
+            <button
+              onClick={activateNow}
+              className="flex-1 px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container"
+            >
+              Aktifkan Sekarang
+            </button>
+          </div>
+          {activePresetName && (
+            <span className="text-[10px] normal-case tracking-normal text-primary">
+              Aktif: {activePresetName} ({mode === 'event' ? 'Event' : 'Regular'})
+            </span>
+          )}
+        </div>
+
         <p className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">
-          Disimpan otomatis di browser ini.
+          Config tersimpan di database & tidak hilang saat refresh.
         </p>
       </div>
     </div>

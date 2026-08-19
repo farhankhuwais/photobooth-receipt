@@ -18,15 +18,106 @@ const TEMPLATES = [
 
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, frames, selectedFrameId, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setTemplate, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
+  const { shots, template, shotCount, branding, frames, selectedFrameId, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setTemplate, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
+  const [showModeMenu, setShowModeMenu] = useState(false)
+  const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
+  const [attractBusy, setAttractBusy] = useState(false)
+  const [attractIcon, setAttractIcon] = useState<string | null>(null)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
   const running = useRef(false)
+  const modeMenuRef = useRef<HTMLDivElement>(null)
+  const attractRef = useRef<HTMLInputElement>(null)
+  const attractIconRef = useRef<HTMLInputElement>(null)
 
-  // Load gallery frame custom dari DB saat boot.
+  // Load background attract untuk mode saat ini (regular/event) dari DB.
+  function loadAttract(m: 'regular' | 'event') {
+    fetch(`/api/attract/${m}`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!b) {
+          if (useSession.getState().mode === m) setAttractMedia(null)
+          return
+        }
+        const url = URL.createObjectURL(b)
+        const isVideo = b.type.startsWith('video/')
+        if (useSession.getState().mode === m) {
+          setAttractMedia({ type: isVideo ? 'video' : 'image', url })
+        }
+      })
+      .catch(() => {})
+  }
+
+  // Upload background attract untuk mode tertentu.
+  async function onAttractFile(e: React.ChangeEvent<HTMLInputElement>, m: 'regular' | 'event') {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setAttractBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('media', f)
+      const res = await fetch(`/api/attract/${m}`, { method: 'POST', body: fd })
+      if (res.ok) loadAttract(m)
+    } catch {
+      /* ignore */
+    } finally {
+      setAttractBusy(false)
+      if (attractRef.current) attractRef.current.value = ''
+    }
+  }
+
+  // Load ikon tap custom per mode dari DB.
+  function loadAttractIcon(m: 'regular' | 'event') {
+    fetch(`/api/attract/${m}/icon`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        const url = b ? URL.createObjectURL(b) : null
+        if (useSession.getState().mode === m) setAttractIcon(url)
+      })
+      .catch(() => {})
+  }
+
+  // Upload ikon tap custom per mode.
+  async function onAttractIconFile(e: React.ChangeEvent<HTMLInputElement>, m: 'regular' | 'event') {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setAttractBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('image', f)
+      const res = await fetch(`/api/attract/${m}/icon`, { method: 'POST', body: fd })
+      if (res.ok) loadAttractIcon(m)
+    } catch {
+      /* ignore */
+    } finally {
+      setAttractBusy(false)
+      const ref = e.target
+      if (ref) ref.value = ''
+    }
+  }
+
+  // Tutup menu mode kalau klik di luar.
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (modeMenuRef.current && !modeMenuRef.current.contains(e.target as Node)) {
+        setShowModeMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [])
+
+  // Load attract background + ikon saat mode berubah / boot.
+  useEffect(() => {
+    loadAttract(mode)
+    loadAttractIcon(mode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
+
+  // Load gallery frame custom + active config dari DB saat boot (survive refresh).
   useEffect(() => {
     let active = true
     fetch('/api/frames')
@@ -36,6 +127,17 @@ export default function App() {
         useSession.getState().setFrames(
           list.map((f) => ({ id: f.id, name: f.name, url: `/api/frames/${f.id}` }))
         )
+      })
+      .catch(() => {})
+    fetch('/api/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => {
+        if (!active || !cfg) return
+        const st = useSession.getState()
+        st.setMode(cfg.mode === 'event' ? 'event' : 'regular')
+        st.setPrice(Number(cfg.price) || 5000)
+        st.setActivePreset(cfg.preset_name || null)
+        if (cfg.branding) st.setBranding(cfg.branding)
       })
       .catch(() => {})
     return () => {
@@ -126,10 +228,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFrameId, frames])
 
-  // CETAK = gerbang pembayaran. Buka layar BAYAR (QRIS / CASH), jangan print langsung.
+  // CETAK = gerbang pembayaran. Di mode event (jasa) skip paywall -> langsung cetak.
+  // Di mode regular, buka layar BAYAR (QRIS / CASH).
   function onPrint() {
     if (!stripCanvas.current) return
-    openPay()
+    const s = useSession.getState()
+    if (s.mode === 'event') {
+      // Event: langsung lunas (gratis), trigger efek cetak di bawah.
+      s.setPaid(true)
+    } else {
+      openPay()
+    }
   }
 
   // Saat lunas (QRIS simulasi ATAU cash dikonfirmasi operator), cetak otomatis
@@ -144,15 +253,18 @@ export default function App() {
       // saat lunas: payQrisSim -> 'qris', confirmCashPaid -> 'cash').
       const s = useSession.getState()
       const method = s.paymentMethod || 'unknown'
+      const amount = s.mode === 'event' ? 0 : s.price
       try {
         await fetch('/portal/api/log', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             method,
-            amount: 5000,
+            amount,
             template: s.template,
-            note: method === 'cash' ? 'operator confirm' : 'qris sim'
+            note: method === 'cash' ? 'operator confirm' : 'qris sim',
+            preset: s.activePresetName || null,
+            mode: s.mode,
           })
         })
       } catch {
@@ -222,16 +334,143 @@ export default function App() {
     <div className="bg-background text-on-surface min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
       {screen === 'attract' ? (
         /* Layar attract — kiosk idle, customer tap untuk mulai */
-        <main className="flex-grow flex flex-col items-center justify-center bg-background px-margin-mobile select-none">
+        <main className="relative flex-grow flex flex-col items-center justify-center bg-background px-margin-mobile select-none overflow-hidden">
+          {/* Background image/video (per mode, dari DB) */}
+          {attractMedia && (
+            attractMedia.type === 'video' ? (
+              <video
+                src={attractMedia.url}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="absolute inset-0 w-full h-full object-cover z-0"
+              />
+            ) : (
+              <img
+                src={attractMedia.url}
+                alt=""
+                className="absolute inset-0 w-full h-full object-cover z-0"
+              />
+            )
+          )}
+          {/* Overlay tipis biar teks tetap kebaca tanpa menutupi background */}
+          <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/25 via-black/10 to-black/35 pointer-events-none"></div>
+
+          {/* Tombol mode pojok kanan atas */}
+          <div className="absolute top-sm right-sm z-30" ref={modeMenuRef}>
+            <button
+              onClick={() => setShowModeMenu((v) => !v)}
+              className="flex items-center gap-2 px-3 py-2 border-4 border-black bg-surface text-on-surface font-label-bold uppercase text-[12px] brutal-shadow-sm hover:bg-surface-variant"
+              title="Pilih Mode"
+            >
+              <span className="material-symbols-outlined text-[20px]">tune</span>
+              {mode === 'event' ? 'Event' : 'Regular'}
+            </button>
+            {showModeMenu && (
+              <div className="absolute right-0 mt-2 w-60 bg-surface border-4 border-black brutal-shadow p-3 flex flex-col gap-2 z-40">
+                <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[11px]">Pilih Mode Booth</span>
+                {(['regular', 'event'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      useSession.getState().setMode(m)
+                      setShowModeMenu(false)
+                    }}
+                    className={`px-3 py-2 border-4 border-black font-label-bold uppercase text-[12px] neo-button ${mode === m ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
+                  >
+                    {m === 'event' ? 'Event (jasa)' : 'Regular (per cetak)'}
+                  </button>
+                ))}
+                <div className="border-t-2 border-black pt-2 mt-1">
+                  <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Background layar ini</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <button
+                      onClick={() => attractRef.current?.click()}
+                      className="px-2 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase text-[11px] neo-button"
+                    >
+                      + Gambar/Video
+                    </button>
+                    {attractMedia && (
+                      <button
+                        onClick={async () => {
+                          await fetch(`/api/attract/${mode}`, { method: 'DELETE' }).catch(() => {})
+                          setAttractMedia(null)
+                        }}
+                        className="px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase text-[11px] neo-button"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                    <input
+                      ref={attractRef}
+                      type="file"
+                      accept="image/*,video/*"
+                      hidden
+                      onChange={(e) => onAttractFile(e, mode)}
+                    />
+                  </div>
+                  {attractBusy && (
+                    <span className="text-[10px] normal-case text-primary">Mengupload…</span>
+                  )}
+                  <span className="text-[10px] normal-case text-on-surface-variant">
+                    Tersimpan di DB, otomatis tiap mode.
+                  </span>
+                </div>
+                <div className="border-t-2 border-black pt-2 mt-1">
+                  <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Ikon "Sentuh"</span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <button
+                      onClick={() => attractIconRef.current?.click()}
+                      className="px-2 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase text-[11px] neo-button"
+                    >
+                      + Ganti Ikon
+                    </button>
+                    {attractIcon && (
+                      <button
+                        onClick={async () => {
+                          await fetch(`/api/attract/${mode}/icon`, { method: 'DELETE' }).catch(() => {})
+                          setAttractIcon(null)
+                        }}
+                        className="px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase text-[11px] neo-button"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <input
+                      ref={attractIconRef}
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      onChange={(e) => onAttractIconFile(e, mode)}
+                    />
+                  </div>
+                  <span className="text-[10px] normal-case text-on-surface-variant">
+                    PNG transparan 120×120, pakai default kalau kosong.
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={enterBooth}
-            className="group relative flex flex-col items-center justify-center gap-md w-[min(90vw,720px)] aspect-[4/3] border-4 border-black bg-surface-container brutal-shadow hover:bg-surface-container-high transition-colors"
+            className="relative z-10 group mt-16 flex flex-col items-center justify-center gap-md w-[min(90vw,720px)] aspect-[4/3] bg-transparent border-0 transition-transform duration-300 hover:scale-[1.02]"
           >
-            <span className="material-symbols-outlined text-[120px] text-on-surface group-hover:scale-110 transition-transform duration-300">touch_app</span>
-            <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider text-on-surface">Sentuh untuk mulai</span>
-            <span className="font-label-bold text-label-bold text-on-surface-variant uppercase tracking-widest text-[12px]">Photobooth • Rp 5.000 / cetak</span>
-            <div className="absolute -top-10 -left-10 w-20 h-20 bg-primary-container border-4 border-black rounded-full shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] animate-[bounce_3s_infinite]"></div>
-            <div className="absolute bottom-6 -right-8 w-16 h-16 bg-secondary-container border-4 border-black rotate-12 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"></div>
+            {attractIcon ? (
+              <img
+                src={attractIcon}
+                alt=""
+                className="w-[120px] h-[120px] object-contain drop-shadow-[4px_4px_0px_rgba(0,0,0,0.8)] attract-beat"
+              />
+            ) : (
+              <span className="material-symbols-outlined text-[120px] text-white drop-shadow-[4px_4px_0px_rgba(0,0,0,0.8)] group-hover:scale-110 transition-transform duration-300 attract-beat">touch_app</span>
+            )}
+            <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider text-white drop-shadow-[3px_3px_0px_rgba(0,0,0,0.8)] attract-beat">Sentuh untuk mulai</span>
+            <span className="font-label-bold text-label-bold text-white/90 uppercase tracking-widest text-[12px] drop-shadow-[2px_2px_0px_rgba(0,0,0,0.8)]">
+              {mode === 'event' ? `Event • ${branding.eventName || 'Acara'}` : `Photobooth • Rp ${price.toLocaleString('id-ID')} / cetak`}
+            </span>
+            <span className="material-symbols-outlined text-[40px] text-white/90 drop-shadow-[2px_2px_0px_rgba(0,0,0,0.8)] attract-hint">arrow_downward</span>
           </button>
         </main>
       ) : (
@@ -463,7 +702,7 @@ export default function App() {
           <div className="w-full max-w-2xl bg-surface-container border-4 border-black brutal-shadow p-lg flex flex-col gap-md">
             <div className="flex items-center justify-between">
               <h2 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black uppercase text-on-surface">Bayar</h2>
-              <span className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface bg-primary-container border-2 border-black px-3 py-1">Rp 5.000</span>
+              <span className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface bg-primary-container border-2 border-black px-3 py-1">Rp {price.toLocaleString('id-ID')}</span>
               <button onClick={closePay} className="w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button" title="Batal">
                 <span className="material-symbols-outlined text-on-surface">close</span>
               </button>
@@ -495,7 +734,7 @@ export default function App() {
             {/* Konfirmasi 2-tap cash (anti salah tekan) */}
             {cashConfirm && (
               <div className="flex flex-col gap-sm bg-error-container border-4 border-black p-sm">
-                <p className="font-label-bold text-label-bold text-on-error-container uppercase text-center">Operator: sudah terima uang Rp 5.000?</p>
+                <p className="font-label-bold text-label-bold text-on-error-container uppercase text-center">Operator: sudah terima uang Rp {price.toLocaleString('id-ID')}?</p>
                 <div className="flex gap-sm">
                   <button onClick={closePay} className="flex-1 py-3 border-2 border-black bg-surface font-label-bold text-label-bold uppercase">Batal</button>
                   <button onClick={confirmCashPaid} className="flex-1 py-3 border-4 border-black bg-primary-container text-on-primary-container font-label-bold text-label-bold uppercase brutal-shadow hover:bg-primary">Ya, sudah bayar</button>

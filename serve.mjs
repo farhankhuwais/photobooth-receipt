@@ -14,7 +14,7 @@ import multer from 'multer'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame } from './db.mjs'
+import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -30,7 +30,7 @@ app.use(cors())
 
 // Frontend (SPA): serve dist, fallback to index.html
 app.use(express.static(DIST))
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } })
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
 // Store uploaded strips in Postgres (id = timestamp.png), serve by id
 app.post('/api/upload', upload.single('image'), async (req, res) => {
@@ -56,9 +56,12 @@ app.get('/u/:id', async (req, res) => {
 // Event branding presets (server-side, replaces localStorage-only storage)
 app.post('/api/presets', express.json({ limit: '1mb' }), async (req, res) => {
   try {
-    const { name, branding } = req.body || {}
+    const { name, mode, price, branding } = req.body || {}
     if (!name) return res.status(400).json({ error: 'no name' })
-    const id = await savePreset(name, branding ?? {})
+    const m = mode === 'event' ? 'event' : 'regular'
+    const p = Number(price)
+    const finalPrice = m === 'event' ? 0 : (p === 0 ? 0 : p || 5000)
+    const id = await savePreset(name, m, finalPrice, branding ?? {})
     res.json({ id, name })
   } catch (e) {
     res.status(500).json({ error: String(e) })
@@ -73,9 +76,35 @@ app.get('/api/presets', async (_req, res) => {
 })
 app.get('/api/presets/:name', async (req, res) => {
   try {
-    const branding = await getPreset(req.params.name)
-    if (!branding) return res.status(404).json({ error: 'not found' })
-    res.json(branding)
+    const p = await getPreset(req.params.name)
+    if (!p) return res.status(404).json({ error: 'not found' })
+    res.json(p)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// ── Active app config (persisted; survives refresh/cache clear) ──
+app.get('/api/config', async (_req, res) => {
+  try {
+    const cfg = await getConfig()
+    res.json(cfg || { mode: 'regular', price: 5000, preset_name: null, branding: null })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+app.post('/api/config', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const { mode, price, preset_name, branding } = req.body || {}
+    const p = Number(price)
+    const finalPrice = p === 0 ? 0 : p || 5000
+    await saveConfig({
+      mode: mode === 'event' ? 'event' : 'regular',
+      price: finalPrice,
+      preset_name: preset_name ?? null,
+      branding: branding ?? {},
+    })
+    res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -118,6 +147,81 @@ app.get('/api/frames/:id', async (req, res) => {
 app.delete('/api/frames/:id', async (req, res) => {
   try {
     await deleteFrame(req.params.id)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// ── Attract background (image/video) per mode, disimpan di DB ──
+// Upload/simpan background untuk mode tertentu (regular/event).
+app.post('/api/attract/:mode', upload.single('media'), async (req, res) => {
+  try {
+    const mode = req.params.mode === 'event' ? 'event' : 'regular'
+    if (!req.file) return res.status(400).json({ error: 'no media' })
+    const mt = req.file.mimetype || 'application/octet-stream'
+    if (!/^image\//.test(mt) && !/^video\//.test(mt)) {
+      return res.status(400).json({ error: 'hanya image/video' })
+    }
+    await saveAttract(mode, mt, req.file.buffer)
+    res.json({ ok: true, mode, mediaType: mt })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Ambil blob background untuk mode tertentu.
+app.get('/api/attract/:mode', async (req, res) => {
+  try {
+    const mode = req.params.mode === 'event' ? 'event' : 'regular'
+    const row = await getAttract(mode)
+    if (!row) return res.status(404).end()
+    res.set('Content-Type', row.media_type)
+    res.set('Cache-Control', 'public, max-age=31536000, immutable')
+    res.send(row.data)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Hapus background mode tertentu.
+app.delete('/api/attract/:mode', async (req, res) => {
+  try {
+    const mode = req.params.mode === 'event' ? 'event' : 'regular'
+    await deleteAttract(mode)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// ── Attract tap icon (custom PNG per mode) ──
+app.post('/api/attract/:mode/icon', upload.single('image'), async (req, res) => {
+  try {
+    const mode = req.params.mode === 'event' ? 'event' : 'regular'
+    if (!req.file) return res.status(400).json({ error: 'no image' })
+    const mt = req.file.mimetype || 'image/png'
+    if (!/^image\//.test(mt)) return res.status(400).json({ error: 'hanya image' })
+    await saveAttractIcon(mode, mt, req.file.buffer)
+    res.json({ ok: true, mode, mediaType: mt })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+app.get('/api/attract/:mode/icon', async (req, res) => {
+  try {
+    const mode = req.params.mode === 'event' ? 'event' : 'regular'
+    const row = await getAttractIcon(mode)
+    if (!row) return res.status(404).end()
+    res.set('Content-Type', row.media_type)
+    res.set('Cache-Control', 'public, max-age=31536000, immutable')
+    res.send(row.data)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+app.delete('/api/attract/:mode/icon', async (req, res) => {
+  try {
+    const mode = req.params.mode === 'event' ? 'event' : 'regular'
+    await deleteAttractIcon(mode)
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: String(e) })
@@ -196,10 +300,17 @@ app.post('/portal/api/logout', express.json({ limit: '1mb' }), async (req, res) 
 // Hanya validasi field wajib; bukan endpoint baca data sensitif.
 app.post('/portal/api/log', express.json({ limit: '1mb' }), async (req, res) => {
   try {
-    const { method, amount, template, note } = req.body || {}
+    const { method, amount, template, note, preset, mode } = req.body || {}
     if (!method || !amount) return res.status(400).json({ error: 'method & amount required' })
     if (!['qris', 'cash'].includes(method)) return res.status(400).json({ error: 'method tidak valid' })
-    const row = await saveTransaction({ method, amount: Number(amount), template: template || null, note: note || null })
+    const row = await saveTransaction({
+      method,
+      amount: Number(amount),
+      template: template || null,
+      note: note || null,
+      preset: preset || null,
+      mode: mode || 'regular',
+    })
     res.json({ ok: true, id: row.id })
   } catch (e) {
     res.status(500).json({ error: String(e) })
@@ -244,13 +355,15 @@ app.get('/portal/api/export', requireAccess, async (req, res) => {
       const s = v === null || v === undefined ? '' : String(v)
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
     }
-    const header = ['id', 'waktu', 'metode', 'template', 'nominal', 'catatan']
+    const header = ['id', 'waktu', 'metode', 'mode', 'preset', 'template', 'nominal', 'catatan']
     const lines = [header.join(',')]
     for (const r of rows) {
       lines.push([
         r.id,
         new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 19),
         r.method,
+        r.mode || 'regular',
+        r.preset || '',
         r.template || '',
         r.amount,
         r.note || '',
@@ -278,7 +391,7 @@ const PORT = Number(process.env.PORT || 8080)
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`photobooth combined server on :${PORT}`)
   console.log(`  frontend : /`)
-  console.log(`  api      : /api/upload, /api/print, /api/presets`)
+  console.log(`  api      : /api/upload, /api/print, /api/presets, /api/config, /api/frames`)
   console.log(`  storage  : Postgres (db=photobooth)`)
   console.log(`  printer  : ${PRINT_ENABLED ? PRINTER_PATH + ' @' + PRINTER_BAUD : 'disabled (set PRINT_ENABLED=1 & PRINTER_PATH to enable)'}`)
 })
