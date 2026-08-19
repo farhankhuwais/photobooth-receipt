@@ -342,7 +342,15 @@ async function doChangePw() {
   }
 }
 
-load()
+// Boot: cek session. Kalau valid -> tampilkan dashboard (showDash memanggil load()).
+// Kalau 401 -> tampilkan form login. Tanpa ini, dashboard tetap display:none
+// saat buka/refresh /portal dengan session masih valid (hanya header yg muncul).
+async function boot() {
+  const r = await fetch('/portal/api/stats', { method: 'GET', headers: { 'Accept': 'application/json' } })
+  if (r.ok) showDash()
+  else showLogin()
+}
+boot()
 setInterval(load, 20000)
 </script>
 </body>
