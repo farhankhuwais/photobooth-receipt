@@ -78,6 +78,7 @@
 <header>
   <h1>📸 Photobooth Admin</h1>
   <div id="headerActions" style="display:none">
+    <button class="iconbtn guide" title="Panduan Bingkai Canva" onclick="window.open('/guides/README.html','_blank')">📐</button>
     <button class="iconbtn pw" title="Ganti Password" onclick="showPwPanel()">🔑</button>
     <button class="iconbtn out" title="Logout" onclick="doLogout()">🚪</button>
   </div>
@@ -117,6 +118,10 @@
       <button class="quick" onclick="quickRange('month')">Bulan Ini</button>
     </div>
     <div class="spacer"></div>
+    <a href="/guides/README.html" target="_blank" rel="noreferrer"
+       style="display:inline-flex; align-items:center; gap:6px; padding:10px 14px; font-weight:800; text-transform:uppercase; cursor:pointer; border:3px solid #000; background:#fff; color:#000; text-decoration:none; font-size:12px;">
+      📐 Panduan Bingkai Canva
+    </a>
     <button class="csv" onclick="exportCsv()">⬇ Export CSV</button>
   </div>
 
