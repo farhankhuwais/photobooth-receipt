@@ -372,9 +372,17 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
               onChange={onGallery}
             />
           </div>
-          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+          <span className="text-[10px] normal-case break-words text-on-surface-variant">
             Bisa upload lebih dari satu. Tersimpan di database & bisa dipilih customer di layar booth.
           </span>
+          <a
+            href="/guides/README.md"
+            target="_blank"
+            rel="noreferrer"
+            className="text-[10px] normal-case tracking-normal text-primary underline decoration-2 decoration-black/40 hover:decoration-black"
+          >
+            📐 Panduan ukuran & board Canva (download)
+          </a>
           {galleryBusy && (
             <span className="text-[10px] normal-case tracking-normal text-primary">Mengupload…</span>
           )}

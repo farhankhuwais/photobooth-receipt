@@ -120,9 +120,16 @@ export async function composeStrip(
   const qr = qrText ? await loadImage(await qrDataUrl(qrText)) : null
 
   const headerH = branding.logoDataUrl ? 266 : 64
-  const footerH = qr ? 200 : 72
+  // Footer dibikin lebih panjang & di-stack dari atas: QR → scan text → tanggal
+  // → (jalur khusus paling bawah buat watermark) biar gak tenggelam di bawah logo/QR.
+  let footerH = 12 // padding bawah
+  if (qr) footerH += 180 + (branding.qrText ? 28 : 8)
+  if (branding.showDate) footerH += 34
+  if (branding.watermark) footerH += 44 // jalur khusus watermark
+  footerH += 10 // padding atas
+  if (footerH < (branding.watermark ? 56 : 48)) footerH = branding.watermark ? 56 : 48
   const gap = 10
-  const sidePad = 12
+  const sidePad = 20
 
   const innerW = PRINT_WIDTH - sidePad * 2
   let shotW = innerW
@@ -152,9 +159,9 @@ export async function composeStrip(
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   if (logo) {
-    // Logo ukuran FIX persegi (kotak) BESAR di kertas, terlepas dari aspek asli file.
-    const pad = 8
-    const box = Math.min(headerH - pad * 2, 250) // kotak hingga 250px
+      // Logo ukuran FIX persegi (kotak) BESAR di kertas, terlepas dari aspek asli file.
+            const pad = 4
+            const box = Math.min(headerH - pad * 2, 250) // kotak hingga 250px
     const lx = (PRINT_WIDTH - box) / 2
     const ly = (headerH - box) / 2
     // Latar putih supaya logo transparan/berwarna tetap rapi di kotak.
@@ -191,22 +198,35 @@ export async function composeStrip(
 
   const fy = headerH + contentH
   ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#000000' // pastikan teks footer (scan/date/watermark) hitam,
+  // gak ikut fillStyle putih dari kotak logo di atas.
+  // Stack konten footer dari atas, sisakan jalur terbawah buat watermark
+  // (gak pernah tabrakan sama QR / tanggal).
+  let cursorY = fy + 10
   if (qr) {
     const qz = 180
-    ctx.drawImage(qr, (PRINT_WIDTH - qz) / 2, fy, qz, qz)
+    ctx.drawImage(qr, (PRINT_WIDTH - qz) / 2, cursorY, qz, qz)
+    cursorY += qz + 6
     if (branding.qrText) {
       ctx.font = '13px sans-serif'
-      ctx.fillText('scan untuk foto digital', PRINT_WIDTH / 2, fy + qz + 18)
+      ctx.fillText('scan untuk foto digital', PRINT_WIDTH / 2, cursorY + 16)
+      cursorY += 30
+    }
+    if (branding.showDate) {
+      ctx.font = '18px sans-serif'
+      ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
+      cursorY += 34
     }
   } else if (branding.showDate) {
     ctx.font = '18px sans-serif'
-    ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, fy + 26)
-  } else {
-    ctx.textBaseline = 'middle'
+    ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
+    cursorY += 34
   }
   if (branding.watermark) {
     ctx.font = '15px sans-serif'
-    ctx.fillText(branding.watermark, PRINT_WIDTH / 2, canvas.height - 14)
+    ctx.fillStyle = '#000000' // eksplisit hitam — gak ikut fillStyle putih dari kotak logo
+    // Selalu di jalur terbawah (44px) → gak tenggelam di bawah logo/QR/tanggal.
+    ctx.fillText(branding.watermark, PRINT_WIDTH / 2, canvas.height - 22)
   }
 
   // Frame bawaan digambar (kecuali 'none'). Nama event di frame mengikuti toggle cetak.
