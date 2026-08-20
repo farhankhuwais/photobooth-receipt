@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { DesignDef } from '../modules/templates/TemplateEngine'
 
 export type TemplateId = 'strip3' | 'grid2x2' | 'single'
 export type FrameId = 'none' | 'love' | 'party' | 'vintage' | 'neon' | 'floral'
@@ -43,6 +44,10 @@ interface SessionState {
   // Gallery frame custom (dari DB) + pilihan customer.
   frames: FrameDef[]
   selectedFrameId: string | null
+  // Gallery design/mockup kustom (dari DB) + pilihan customer.
+  designs: { id: string; name: string; canvasW: number; canvasH: number; slotsCount?: number; hasFrame?: boolean }[]
+  selectedDesignId: string | null
+  design: DesignDef | null
   // Mode booth: 'regular' (bayar per cetak) atau 'event' (jasa, gratis/tanpa paywall).
   mode: AppMode
   price: number
@@ -62,6 +67,9 @@ interface SessionState {
   setBranding: (b: Partial<BrandingConfig>) => void
   setFrames: (f: FrameDef[]) => void
   setSelectedFrameId: (id: string | null) => void
+  setDesigns: (d: { id: string; name: string; canvasW: number; canvasH: number }[]) => void
+  setSelectedDesignId: (id: string | null) => void
+  setDesign: (d: DesignDef | null) => void
   setMode: (m: AppMode) => void
   setPrice: (p: number) => void
   setActivePreset: (name: string | null) => void
@@ -126,6 +134,9 @@ export const useSession = create<SessionState>((set) => ({
   branding: loadBranding(),
   frames: [],
   selectedFrameId: null,
+  designs: [],
+  selectedDesignId: null,
+  design: null,
   mode: 'regular',
   price: 5000,
   activePresetName: null,
@@ -144,6 +155,9 @@ export const useSession = create<SessionState>((set) => ({
   setBranding: (b) => set((s) => ({ branding: { ...s.branding, ...b } })),
   setFrames: (frames) => set({ frames }),
   setSelectedFrameId: (id) => set({ selectedFrameId: id }),
+  setDesigns: (designs) => set({ designs }),
+  setSelectedDesignId: (id) => set({ selectedDesignId: id }),
+  setDesign: (design) => set({ design }),
   setMode: (mode) => set({ mode }),
   setPrice: (price) => set({ price }),
   setActivePreset: (name) => set({ activePresetName: name }),

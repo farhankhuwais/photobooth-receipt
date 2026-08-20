@@ -58,6 +58,29 @@ body {
   0%, 100% { transform: translateY(0); opacity: 0.35; }
   50% { transform: translateY(10px); opacity: 1; }
 }
+
+/* Kartu pilih jumlah foto: gerak naik-turun halus agar tidak menutupi teks di bawahnya */
+@keyframes card-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.card-bob {
+  animation: card-bob 2.4s ease-in-out infinite;
+}
+.card-bob:nth-child(2) { animation-delay: 0.3s; }
+.card-bob:nth-child(3) { animation-delay: 0.6s; }
+.card-bob:nth-child(4) { animation-delay: 0.9s; }
+.attempt-btn { animation: none; }
+/* Hover efek neobrutalism pada tombol */
+@keyframes neo-btn-hover {
+  0% { transform: scale(1) translateY(0); box-shadow: 6px 6px 0px 0px rgba(0,0,0,1); border-color: currentColor; }
+  50% { transform: scale(1.02) translateY(-2px); box-shadow: 10px 10px 0px 0px rgba(0,0,0,0.3); border-color: #FFE600; }
+  100% { transform: scale(1) translateY(0); box-shadow: 6px 6px 0px 0px rgba(0,0,0,1); border-color: currentColor; }
+}
+.neo-btn-hover:hover {
+  animation: neo-btn-hover 150ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  border-color: #FFE600 !important;
+}
 .attract-hint {
   animation: attract-hint 1.8s ease-in-out infinite;
 }

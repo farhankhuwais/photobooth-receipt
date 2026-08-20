@@ -110,7 +110,20 @@ export async function initDb() {
       image_data  BYTEA NOT NULL,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS designs (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      frame_data  BYTEA,                 -- PNG bingkai transparan (opsional)
+      canvas_w    INTEGER NOT NULL DEFAULT 308,
+      canvas_h    INTEGER NOT NULL DEFAULT 454,
+      slots       JSONB NOT NULL,        -- [{x,y,w,h,rot}] relatif thd canvas_w/h,
+                                         -- dalam koordinat PRINT_WIDTH (576) setelah diskalakan
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `)
+  // Kolom template (strip3/single/grid2x2) agar tiap template punya frame sendiri.
+  // Null = berlaku semua template (frame lama / universal).
+  await pool.query(`ALTER TABLE frames ADD COLUMN IF NOT EXISTS template TEXT`)
   // Seed default admin dari env (hanya kalau belum ada user sama sekali)
   const { rows } = await pool.query('SELECT COUNT(*)::int AS c FROM admin_user')
   if (rows[0].c === 0) {
@@ -314,17 +327,25 @@ export async function saveConfig(config) {
 }
 
 // ── Custom frame gallery (stored in Postgres, selectable by customer) ──────
-export async function saveFrame(id, name, buf) {
+export async function saveFrame(id, name, buf, template = null) {
   await pool.query(
-    `INSERT INTO frames (id, name, image_data, created_at) VALUES ($1, $2, $3, now())
-     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, image_data = EXCLUDED.image_data`,
-    [id, name, buf]
+    `INSERT INTO frames (id, name, image_data, template, created_at) VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, image_data = EXCLUDED.image_data, template = EXCLUDED.template`,
+    [id, name, buf, template]
   )
   return id
 }
 
-export async function listFrames() {
-  const r = await pool.query('SELECT id, name, created_at FROM frames ORDER BY created_at ASC')
+export async function listFrames(template = null) {
+  // Kalau template diminta, kembalikan frame untuk template itu + frame universal (template NULL).
+  let sql = 'SELECT id, name, template, created_at FROM frames'
+  const args = []
+  if (template) {
+    sql += ' WHERE template = $1 OR template IS NULL'
+    args.push(template)
+  }
+  sql += ' ORDER BY created_at ASC'
+  const r = await pool.query(sql, args)
   return r.rows
 }
 
@@ -335,6 +356,71 @@ export async function getFrame(id) {
 
 export async function deleteFrame(id) {
   await pool.query('DELETE FROM frames WHERE id = $1', [id])
+}
+
+// ── Designs (mockup kustom: bingkai PNG + slot foto bebas/miring) ──
+// slots: array { x, y, w, h, rot } dalam koordinat PRINT_WIDTH (576 px lebar).
+// canvas_w/h = asli mockup (utk skala bingkai). disimpan JSONB.
+export async function saveDesign(id, name, frameBuf, canvasW, canvasH, slots) {
+  await pool.query(
+    `INSERT INTO designs (id, name, frame_data, canvas_w, canvas_h, slots, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, frame_data = EXCLUDED.frame_data,
+       canvas_w = EXCLUDED.canvas_w, canvas_h = EXCLUDED.canvas_h, slots = EXCLUDED.slots`,
+    [id, name, frameBuf, canvasW, canvasH, JSON.stringify(slots)]
+  )
+  return id
+}
+
+// Update design yg sudah ada: ganti slot (dan bingkai kalau dikasih).
+export async function updateDesign(id, { name, frameBuf, slots, canvasW, canvasH } = {}) {
+  const cur = await getDesign(id)
+  if (!cur) throw new Error('design tidak ditemukan')
+  const nextName = name ?? cur.name
+  const nextFrame = frameBuf !== undefined ? frameBuf : cur.frame_data
+  const nextSlots = slots !== undefined ? JSON.stringify(slots) : JSON.stringify(cur.slots)
+  const nextW = canvasW ?? cur.canvas_w
+  const nextH = canvasH ?? cur.canvas_h
+  await pool.query(
+    `UPDATE designs SET name = $2, frame_data = $3, slots = $4, canvas_w = $5, canvas_h = $6 WHERE id = $1`,
+    [id, nextName, nextFrame, nextSlots, nextW, nextH]
+  )
+  return id
+}
+
+export async function listDesigns() {
+  const r = await pool.query(
+    `SELECT id, name, canvas_w, canvas_h, created_at,
+            COALESCE(jsonb_array_length(slots), 0) AS slots_count,
+            (frame_data IS NOT NULL) AS has_frame
+     FROM designs ORDER BY created_at ASC`
+  )
+  return r.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    canvasW: row.canvas_w,
+    canvasH: row.canvas_h,
+    slotsCount: Number(row.slots_count),
+    hasFrame: row.has_frame,
+  }))
+}
+
+export async function getDesign(id) {
+  const r = await pool.query('SELECT id, name, frame_data, canvas_w, canvas_h, slots FROM designs WHERE id = $1', [id])
+  if (!r.rows[0]) return null
+  const row = r.rows[0]
+  return {
+    id: row.id,
+    name: row.name,
+    frame_data: row.frame_data || null,
+    canvas_w: row.canvas_w,
+    canvas_h: row.canvas_h,
+    slots: typeof row.slots === 'string' ? JSON.parse(row.slots) : row.slots,
+  }
+}
+
+export async function deleteDesign(id) {
+  await pool.query('DELETE FROM designs WHERE id = $1', [id])
 }
 
 // ── Attract screen background (image/video) per mode, stored in Postgres ──

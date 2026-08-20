@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSession } from './store/useSession'
 import { useCamera } from './modules/camera/useCamera'
 import { composeStrip } from './modules/templates/TemplateEngine'
@@ -10,19 +10,16 @@ import { Settings } from './modules/branding/Settings'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-const TEMPLATES = [
-  { id: 'strip3', label: '3 Vertikal' },
-  { id: 'grid2x2', label: '2x2' },
-  { id: 'single', label: '1 Foto' }
-] as const
-
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, frames, selectedFrameId, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setTemplate, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
+  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
+  const [step, setStep] = useState<1 | 2>(1)     // 1=pilih grid, 2=pilih desain
+  const [grid, setGrid] = useState<number | null>(null) // jumlah foto terpilih (1/2/3/4)
+  const [armed, setArmed] = useState(false)      // kamera sudah "siap" (tombol Mulai Jepret ditekan)
   const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
@@ -71,18 +68,90 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
 
-  // Load gallery frame custom + active config dari DB saat boot (survive refresh).
+  // Load gallery frame custom dari DB. Filter per template (?template=) + universal (NULL).
+  // Saat template berubah, list di-refresh & frame pertama otomatis dipilih (kalau ada).
+  const loadFrames = useCallback(async (tpl: string) => {
+    try {
+      const list = await fetch(`/api/frames?template=${tpl}`).then((r) => (r.ok ? r.json() : []))
+      const frames = list.map((f: { id: string; name: string; template?: string | null }) => ({ id: f.id, name: f.name, template: f.template ?? null, url: `/api/frames/${f.id}` }))
+      const st = useSession.getState()
+      st.setFrames(frames)
+      // Auto-pilih: prioritas frame yg template-nya PERSIS cocok; kalau gak ada,
+      // pilih universal (template NULL) pertama; kalau kosong -> null.
+      const exact = frames.find((f: { id: string; name: string; template?: string | null; url: string }) => f.template === tpl)
+      const universal = frames.find((f: { id: string; name: string; template?: string | null; url: string }) => !f.template)
+      st.setSelectedFrameId((exact || universal)?.id ?? null)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   useEffect(() => {
     let active = true
-    fetch('/api/frames')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((list: { id: string; name: string }[]) => {
-        if (!active) return
-        useSession.getState().setFrames(
-          list.map((f) => ({ id: f.id, name: f.name, url: `/api/frames/${f.id}` }))
-        )
-      })
-      .catch(() => {})
+    loadFrames(template).then(() => { if (!active) return })
+    return () => { active = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template, loadFrames])
+
+  // Load daftar design/mockup dari DB.
+  async function loadDesigns() {
+    try {
+      const list = await (await fetch('/api/designs')).json()
+      if (!Array.isArray(list)) return
+      useSession.getState().setDesigns(list)
+    } catch { /* ignore */ }
+  }
+
+  // Load design saat boot + tiap masuk booth (biar design baru langsung muncul).
+  useEffect(() => {
+    loadDesigns()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Saat masuk booth, refresh daftar design & reset alur pilih (grid -> desain).
+  useEffect(() => {
+    if (screen !== 'booth') return
+    setStep(1); setGrid(null); setArmed(false)
+    loadDesigns()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen])
+
+  // Pilih design: fetch detail (slot + bingkai) lalu resolve koordinat ke PRINT_WIDTH.
+  // id=null = Template Biasa (tanpa mockup), jumlah foto ikut grid terpilih.
+  async function pickDesign(id: string | null) {
+    const st = useSession.getState()
+    if (!id) {
+      st.setSelectedDesignId(null)
+      st.setDesign(null)
+      useSession.setState({ shotCount: grid ?? 1 })
+      return
+    }
+    const d = await fetch(`/api/designs/${id}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    if (!d) return
+    const scale = 576 / (d.canvas_w || 308)
+    const slots = (d.slots || []).map((s: any) => ({
+      x: Math.round(s.x * scale),
+      y: Math.round(s.y * scale),
+      w: Math.round(s.w * scale),
+      h: Math.round(s.h * scale),
+      rot: s.rot || 0,
+    }))
+    st.setDesign({
+      id: d.id,
+      name: d.name,
+      frameUrl: d.hasFrame ? `/api/designs/${d.id}/frame` : null,
+      canvasW: d.canvas_w,
+      canvasH: d.canvas_h,
+      slots,
+    })
+    st.setSelectedDesignId(id)
+    // Jumlah foto = jumlah slot design (override template).
+    useSession.setState({ shotCount: slots.length })
+  }
+
+  // Load active config dari DB saat boot (survive refresh).
+  useEffect(() => {
+    let active = true
     fetch('/api/config')
       .then((r) => (r.ok ? r.json() : null))
       .then((cfg) => {
@@ -94,9 +163,7 @@ export default function App() {
         if (cfg.branding) st.setBranding(cfg.branding)
       })
       .catch(() => {})
-    return () => {
-      active = false
-    }
+    return () => { active = false }
   }, [])
 
   function captureFrame() {
@@ -133,7 +200,7 @@ export default function App() {
     if (!s.shots.length) return
     let qrUrl: string | null = s.digitalUrl
     if (s.bridgeUrl) {
-      const first = await composeStrip(s.shots, s.branding, s.template, '', s.frames, s.selectedFrameId)
+      const first = await composeStrip(s.shots, s.branding, s.template, '', s.frames, s.selectedFrameId, s.design)
       try {
         qrUrl = await uploadStrip(first.toDataURL('image/png'), s.bridgeUrl)
         useSession.getState().setDigitalUrl(qrUrl)
@@ -141,7 +208,7 @@ export default function App() {
         qrUrl = s.branding.qrText || null
       }
     }
-    const canvas = await composeStrip(s.shots, s.branding, s.template, qrUrl, s.frames, s.selectedFrameId)
+    const canvas = await composeStrip(s.shots, s.branding, s.template, qrUrl, s.frames, s.selectedFrameId, s.design)
     stripCanvas.current = canvas
     setStripUrl(canvas.toDataURL('image/png'))
   }
@@ -260,7 +327,7 @@ export default function App() {
   useEffect(() => {
     if (status !== 'done' || !stripCanvas.current || !useSession.getState().shots.length) return
     const s = useSession.getState()
-    composeStrip(s.shots, s.branding, s.template, s.digitalUrl, s.frames, s.selectedFrameId).then((c) => {
+    composeStrip(s.shots, s.branding, s.template, s.digitalUrl, s.frames, s.selectedFrameId, s.design).then((c) => {
       stripCanvas.current = c
       setStripUrl(c.toDataURL('image/png'))
     })
@@ -285,10 +352,10 @@ export default function App() {
   }, [screen])
 
   return (
-    <div className="bg-background text-on-surface min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+    <div className="bg-[#FFE600] text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
       {screen === 'attract' ? (
         /* Layar attract — kiosk idle, customer tap untuk mulai */
-        <main className="relative flex-grow flex flex-col items-center justify-center bg-background px-margin-mobile select-none overflow-hidden">
+        <main className="relative flex-grow flex flex-col items-center justify-center bg-[#FFE600] px-margin-mobile select-none overflow-hidden">
           {/* Background image/video (per mode, dari DB) */}
           {attractMedia && (
             attractMedia.type === 'video' ? (
@@ -345,13 +412,13 @@ export default function App() {
       ) : (
         <>
           {/* Header */}
-          <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-background border-b-4 border-black brutal-shadow-sm">
+          <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-[#FFE600] border-b-4 border-black brutal-shadow-sm">
             <button
-              onClick={onReset}
-              title="Mulai ulang sesi"
-              className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button brutal-shadow-sm"
+                            onClick={() => (screen === 'booth' && status === 'idle' ? (step === 1 ? goAttract() : setStep(1)) : onReset())}
+                            title={screen === 'booth' && status === 'idle' ? 'Kembali' : 'Mulai ulang sesi'}
+                            className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button neo-btn-hover brutal-shadow-sm"
             >
-              <span className="material-symbols-outlined text-on-surface">restart_alt</span>
+              <span className="material-symbols-outlined text-on-surface">{screen === 'booth' && status === 'idle' ? 'arrow_back' : 'restart_alt'}</span>
             </button>
             <div className="flex flex-col items-center">
               <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
@@ -367,12 +434,14 @@ export default function App() {
           )}
 
           {/* Main Layout */}
-          <main className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-background px-margin-mobile' : 'bg-on-background px-margin-mobile'}`}>
+          <main className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-[#FFE600] px-margin-mobile' : 'bg-[#FFE600] px-margin-mobile'}`}>
 
             {status !== 'done' && screen === 'booth' && (
               <>
-            <div className="flex-grow w-full max-w-3xl mx-auto flex flex-col items-center justify-center mt-4">
-              {/* Frame kamera aspect 4:3 — sama dengan layout hasil cetak */}
+            <div className={`w-full max-w-3xl mx-auto flex flex-col items-center justify-center mt-2 ${status === 'capturing' ? 'flex-grow' : 'flex-none'}`}>
+              {/* Kamera HANYA tampil saat capturing (setelah user pilih mockup & next).
+                  Di tahap pilih (idle) kamera disembunyikan. */}
+              {status === 'capturing' && (
               <div className="relative w-full max-w-2xl aspect-[4/3] border-4 border-black brutal-shadow bg-surface-container overflow-hidden">
                 <video
                   ref={videoRef}
@@ -414,31 +483,102 @@ export default function App() {
                   </div>
                 )}
               </div>
+              )}
+              {status === 'capturing' && !armed && (
+                <button
+                  onClick={() => { setArmed(true); runCapture() }}
+                  className="mt-4 w-full max-w-2xl py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group"
+                >
+                  <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
+                  <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
+                  <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
+                </button>
+              )}
             </div>
 
             {status === 'idle' ? (
-              <div className="w-full max-w-3xl mx-auto flex flex-col gap-lg mt-auto pb-sm pt-4">
-                <div className="flex flex-col gap-sm">
-                  <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-widest text-[12px] bg-white self-start px-2 py-1 border-2 border-black shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">Template</span>
-                  <div className="flex gap-sm md:gap-md">
-                    {TEMPLATES.map((t) => (
-                      <button
-                        key={t.id}
-                        disabled={false}
-                        onClick={() => setTemplate(t.id)}
-                        className={`flex-1 py-3 border-4 border-black neo-button shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] font-label-bold text-label-bold whitespace-nowrap ${template === t.id ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                
-                <button onClick={runCapture} className="w-full py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
-                  <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">MULAI</span>
-                  <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
-                </button>
+              <div className="w-full max-w-4xl mx-auto flex flex-col gap-md mt-4 pb-sm pt-2">
+                {step === 1 ? (
+                  <>
+                    <span className="self-start font-headline-md-mobile md:text-headline-md font-black uppercase tracking-wider text-black bg-[#FF4D9D] border-4 border-black px-3 py-1 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] -rotate-1">Pilih Jumlah Foto</span>
+                    <span className="text-[12px] text-black font-label-bold uppercase bg-white border-2 border-black px-2 py-0.5 self-start">Tentukan berapa foto yang akan diambil ✨</span>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-md mb-10 pb-4">
+                      {[1, 2, 3, 4].map((n, idx) => {
+                        const palette = [
+                          'bg-[#FFE600]', 'bg-[#00E5FF]', 'bg-[#FF4D9D]', 'bg-[#7CFF4D]',
+                        ]
+                        const rot = ['-rotate-2', 'rotate-1', 'rotate-2', '-rotate-1'][idx]
+                        return (
+                          <button
+                            key={n}
+                            onClick={() => { setGrid(n); setStep(2) }}
+                            className={`relative py-8 border-4 border-black ${palette[idx]} text-black neo-button flex flex-col items-center gap-2 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[4px] hover:translate-y-[4px] transition-all duration-150 ${rot} card-bob`}
+                          >
+                            <span className="material-symbols-outlined text-[40px] md:text-[56px] leading-none">{n === 1 ? 'looks_one' : n === 2 ? 'looks_two' : n === 3 ? 'looks_3' : 'looks_4'}</span>
+                            <span className="font-display text-[40px] md:text-[56px] font-black leading-none">{n}×</span>
+                            <span className="font-label-bold text-label-bold uppercase text-[12px] bg-white border-2 border-black px-2 py-0.5">{n} Foto</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="font-headline-md-mobile md:text-headline-md font-black uppercase tracking-wider text-on-surface">Pilih Desain ({grid} Foto)</span>
+                      <button onClick={() => setStep(1)} className="px-3 py-2 border-4 border-black bg-surface text-on-surface font-label-bold uppercase text-[12px] neo-button">Kembali</button>
+                    </div>
+
+                    {designs.filter((d) => (d.slotsCount || 0) === grid).length === 0 ? (
+                      <div className="border-4 border-black bg-surface-container-lowest p-4 flex flex-col gap-2">
+                        <span className="font-label-bold text-label-bold text-on-surface uppercase text-[12px]">Belum ada desain {grid} foto</span>
+                        <span className="text-[11px] text-on-surface-variant">Buat di editor pengaturan (⚙), atau lanjut dengan Template Biasa tanpa bingkai.</span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-sm">
+                        {designs.filter((d) => (d.slotsCount || 0) === grid).map((d) => (
+                          <button
+                            key={d.id}
+                            onClick={() => pickDesign(d.id)}
+                            className={`relative border-4 ${selectedDesignId === d.id ? 'border-primary-container bg-primary-container/20' : 'border-black bg-surface hover:bg-surface-variant'} neo-button overflow-hidden flex flex-col items-stretch`}
+                          >
+                            <div className="relative w-full bg-white" style={{ aspectRatio: `${d.canvasW || 308} / ${d.canvasH || 454}` }}>
+                              {d.hasFrame ? (
+                                <img src={`/api/designs/${d.id}/frame`} alt={d.name} className="w-full h-full object-fill" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-on-surface-variant">
+                                  <span className="material-symbols-outlined text-[48px]">photo_frame</span>
+                                </div>
+                              )}
+                              {/* angka urut tiap slot = info letak foto */}
+                              {Array.from({ length: d.slotsCount || 0 }).map((_, i) => (
+                                <span key={i} className="absolute bg-black/70 text-white text-[10px] font-black px-1 leading-tight rounded-sm">{i + 1}</span>
+                              ))}
+                              {selectedDesignId === d.id && (
+                                <span className="absolute top-1 right-1 bg-primary-container text-on-primary-container border-2 border-black px-1 text-[10px] font-black">PILIH</span>
+                              )}
+                            </div>
+                            <span className="px-2 py-1 font-label-bold text-label-bold text-on-surface uppercase text-left text-[11px] truncate">{d.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => pickDesign(null)}
+                      className={`flex-none px-3 py-2 border-4 border-black neo-button font-label-bold text-label-bold uppercase text-[12px] self-start ${!selectedDesignId ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
+                    >Template Biasa</button>
+
+                    <button
+                                    onClick={() => useSession.getState().setStatus('capturing')}
+                                    className="w-full py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button neo-btn-hover flex items-center justify-center gap-sm relative overflow-hidden group"
+                    >
+                      <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
+                      <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Lanjutkan ke Kamera</span>
+                      <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>arrow_forward</span>
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="mt-auto z-20 pb-sm w-full pt-4">

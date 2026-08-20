@@ -14,7 +14,7 @@ import multer from 'multer'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon } from './db.mjs'
+import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -128,9 +128,11 @@ app.post('/api/config', express.json({ limit: '1mb' }), async (req, res) => {
 
 // ── Custom frame gallery (operator upload, customer pilih di booth) ──
 // Daftar frame (tanpa blob) untuk dirender sebagai pilihan di booth.
-app.get('/api/frames', async (_req, res) => {
+app.get('/api/frames', async (req, res) => {
   try {
-    res.json(await listFrames())
+    // ?template=strip3|single|grid2x2 -> filter + frame universal (NULL).
+    const t = typeof req.query.template === 'string' ? req.query.template : null
+    res.json(await listFrames(t))
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -141,7 +143,9 @@ app.post('/api/frames', upload.single('image'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'no image' })
     const id = crypto.randomUUID()
     const name = req.body?.name || `frame-${Date.now()}`
-    await saveFrame(id, name, req.file.buffer)
+    // template opsional: strip3 | single | grid2x2 (kosong = universal).
+    const tpl = (req.body?.template && ['strip3','single','grid2x2'].includes(req.body.template)) ? req.body.template : null
+    await saveFrame(id, name, req.file.buffer, tpl)
     res.json({ id, name })
   } catch (e) {
     res.status(500).json({ error: String(e) })
@@ -163,6 +167,88 @@ app.get('/api/frames/:id', async (req, res) => {
 app.delete('/api/frames/:id', async (req, res) => {
   try {
     await deleteFrame(req.params.id)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// ── Designs (mockup: bingkai PNG + slot foto bebas/miring) ──
+// List design (tanpa blob) untuk picker di booth.
+app.get('/api/designs', async (_req, res) => {
+  try {
+    res.json(await listDesigns())
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Upload design baru: frame PNG (opsional) + slots JSON + canvas w/h.
+app.post('/api/designs', upload.single('image'), async (req, res) => {
+  try {
+    const id = crypto.randomUUID()
+    const name = req.body?.name || `design-${Date.now()}`
+    let slots = []
+    try { slots = JSON.parse(req.body?.slots || '[]') } catch { slots = [] }
+    const cw = Number(req.body?.canvas_w) || 308
+    const ch = Number(req.body?.canvas_h) || 454
+    await saveDesign(id, name, req.file ? req.file.buffer : null, cw, ch, slots)
+    res.json({ id, name })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Update design: ganti slots (dan/atau bingkai). Field opsional.
+app.put('/api/designs/:id', upload.single('image'), async (req, res) => {
+  try {
+    let slots
+    try { slots = req.body?.slots ? JSON.parse(req.body.slots) : undefined } catch { slots = undefined }
+    const canvasW = req.body?.canvas_w ? Number(req.body.canvas_w) : undefined
+    const canvasH = req.body?.canvas_h ? Number(req.body.canvas_h) : undefined
+    await updateDesign(req.params.id, {
+      name: req.body?.name,
+      frameBuf: req.file ? req.file.buffer : undefined,
+      slots,
+      canvasW,
+      canvasH,
+    })
+    res.json({ ok: true, id: req.params.id })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Ambil detail design (JSON: slot + canvas + ada/tidak bingkai).
+app.get('/api/designs/:id', async (req, res) => {
+  try {
+    const d = await getDesign(req.params.id)
+    if (!d) return res.status(404).json({ error: 'not found' })
+    res.json({
+      id: d.id,
+      name: d.name,
+      canvas_w: d.canvas_w,
+      canvas_h: d.canvas_h,
+      slots: d.slots,
+      hasFrame: !!d.frame_data,
+    })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Ambil blob PNG bingkai satu design (dipakai saat render hasil cetak).
+app.get('/api/designs/:id/frame', async (req, res) => {
+  try {
+    const d = await getDesign(req.params.id)
+    if (!d || !d.frame_data) return res.status(404).end()
+    res.set('Content-Type', 'image/png')
+    res.set('Cache-Control', 'public, max-age=31536000, immutable')
+    res.send(d.frame_data)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+// Hapus design.
+app.delete('/api/designs/:id', async (req, res) => {
+  try {
+    await deleteDesign(req.params.id)
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: String(e) })
