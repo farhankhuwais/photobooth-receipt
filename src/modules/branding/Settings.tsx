@@ -8,6 +8,7 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
   const attractRef = useRef<HTMLInputElement>(null)
   const attractIconRef = useRef<HTMLInputElement>(null)
   const [galleryBusy, setGalleryBusy] = useState(false)
+  const [frameTemplate, setFrameTemplate] = useState<string>('')  // '' = universal
   const [attractBusy, setAttractBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   // Mode yang lagi diedit di panel + preset yang dipilih (dropdown per-mode).
@@ -60,6 +61,7 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
         const fd = new FormData()
         fd.append('image', f)
         fd.append('name', f.name.replace(/\.[^.]+$/, ''))
+        if (frameTemplate) fd.append('template', frameTemplate)
         const res = await fetch('/api/frames', { method: 'POST', body: fd })
         if (res.ok) uploaded.push(await res.json())
       }
@@ -353,10 +355,84 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
           />
         </label>
 
+        {/* Jarak dekorasi foto */}
+        <div className="flex flex-col gap-2 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px] border-t-4 border-black pt-3 mt-1">
+          <span>Jarak Dekorasi Foto (px)</span>
+          {([
+            ['photoTopPad', 'Atas (vs logo)', branding.photoTopPad ?? 24],
+            ['photoBottomPad', 'Bawah (vs QR)', branding.photoBottomPad ?? 24],
+            ['photoGap', 'Antar foto', branding.photoGap ?? 20],
+          ] as const).map(([key, label, val]) => (
+            <label key={key} className="flex flex-col gap-1 normal-case tracking-normal">
+              <span className="flex items-center justify-between text-[11px]">
+                <span>{label}</span>
+                <span className="font-bold">{val}px</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={200}
+                step={2}
+                value={val}
+                onChange={(e) => setBranding({ [key]: Number(e.target.value) } as any)}
+                className="w-full accent-black"
+              />
+            </label>
+          ))}
+          {/* Jarak antar foto KHUSUS template 2x2 — horizontal (kiri-kanan) & vertikal (atas-bawah). */}
+          <label className="flex flex-col gap-1 normal-case tracking-normal border-t-2 border-dashed border-black/30 pt-2 mt-1">
+            <span className="flex items-center justify-between text-[11px]">
+              <span>2×2 — Kiri/kanan (X)</span>
+              <span className="font-bold">{branding.photoGap2x2X ?? 20}px</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={2}
+              value={branding.photoGap2x2X ?? 20}
+              onChange={(e) => setBranding({ photoGap2x2X: Number(e.target.value) })}
+              className="w-full accent-black"
+            />
+          </label>
+          <label className="flex flex-col gap-1 normal-case tracking-normal">
+            <span className="flex items-center justify-between text-[11px]">
+              <span>2×2 — Atas/bawah (Y)</span>
+              <span className="font-bold">{branding.photoGap2x2Y ?? 20}px</span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={2}
+              value={branding.photoGap2x2Y ?? 20}
+              onChange={(e) => setBranding({ photoGap2x2Y: Number(e.target.value) })}
+              className="w-full accent-black"
+            />
+            <span className="text-[10px] text-on-surface-variant">
+              Hanya berlaku grid 2×2. Template lain pakai "Antar foto" di atas (sama utk keduanya).
+            </span>
+          </label>
+          <span className="text-[10px] normal-case break-words text-on-surface-variant">
+            Foto dipisah dari logo/QR & antar foto agar bisa dihias. Board panduan Canva akurat di default (atas 24 / bawah 24 / antar 20).
+          </span>
+        </div>
+
         {/* Gallery Bingkai Custom (simpan di DB, customer pilih di booth) */}
         <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">
           Gallery Bingkai Custom
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <select
+              value={frameTemplate}
+              onChange={(e) => setFrameTemplate(e.target.value)}
+              className="px-2 py-2 border-4 border-black bg-surface text-on-surface font-label-bold text-[11px] uppercase"
+              title="Template tujuan bingkai (kosong = semua template)"
+            >
+              <option value="">Semua template</option>
+              <option value="strip3">3 Vertikal</option>
+              <option value="single">1 Foto</option>
+              <option value="grid2x2">2×2</option>
+            </select>
             <button
               onClick={() => galleryRef.current?.click()}
               className="px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container"
@@ -373,7 +449,7 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
             />
           </div>
           <span className="text-[10px] normal-case break-words text-on-surface-variant">
-            Bisa upload lebih dari satu. Tersimpan di database & bisa dipilih customer di layar booth.
+            Pilih template tujuan di dropdown (kosong = semua template). Saat customer ganti template di booth, bingkai otomatis ikut template tersebut. Bisa upload lebih dari satu.
           </span>
           <a
             href="/guides/README.html"

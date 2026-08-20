@@ -11,6 +11,7 @@ export interface FrameDef {
   id: string
   name: string
   url: string
+  template?: string | null  // strip3 | single | grid2x2 | null(universal)
 }
 
 export interface BrandingConfig {
@@ -22,6 +23,13 @@ export interface BrandingConfig {
   frame: FrameId
   // Tampilkan nama event di HASIL CETAK (header + frame vintage). Attract tetap pakai eventName.
   showEventNameOnPrint: boolean
+  // Jarak dekorasi foto (px): atas (vs header/logo), bawah (vs footer QR), antar foto.
+  photoTopPad: number
+  photoBottomPad: number
+  photoGap: number
+  // Jarak antar foto KHUSUS grid 2x2 (px): X = kiri-kanan, Y = atas-bawah.
+  photoGap2x2X: number
+  photoGap2x2Y: number
 }
 
 export type SessionStatus = 'idle' | 'capturing' | 'done'
@@ -84,6 +92,12 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   qrText: '',
   frame: 'none',
   showEventNameOnPrint: true,
+  // Jarak dekorasi foto default (px): atas 24, bawah 24, antar foto 20.
+  photoTopPad: 24,
+  photoBottomPad: 24,
+  photoGap: 20,
+  photoGap2x2X: 20,
+  photoGap2x2Y: 20,
 }
 
 function loadBranding(): BrandingConfig {
@@ -124,7 +138,7 @@ export const useSession = create<SessionState>((set) => ({
   bridgeUrl: loadBridgeUrl(),
   digitalUrl: null,
   setStream: (stream) => set({ stream }),
-  setTemplate: (template) => set({ template, shotCount: countFor(template) }),
+  setTemplate: (template) => set({ template, shotCount: countFor(template), selectedFrameId: null }),
   addShot: (dataUrl) => set((s) => ({ shots: [...s.shots, dataUrl] })),
   resetShots: () => set({ shots: [], status: 'idle', digitalUrl: null }),
   setBranding: (b) => set((s) => ({ branding: { ...s.branding, ...b } })),

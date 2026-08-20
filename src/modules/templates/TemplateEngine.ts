@@ -128,7 +128,13 @@ export async function composeStrip(
   if (branding.watermark) footerH += 44 // jalur khusus watermark
   footerH += 10 // padding atas
   if (footerH < (branding.watermark ? 56 : 48)) footerH = branding.watermark ? 56 : 48
-  const gap = 10
+  // Jarak dekorasi foto (px) dari Settings. Fallback default biar DB lama aman.
+  const topPad = branding.photoTopPad ?? 24
+  const bottomPad = branding.photoBottomPad ?? 24
+  // Grid 2x2 pakai jarak antar foto KHUSUS (X = kiri-kanan, Y = atas-bawah);
+  // template lain pakai photoGap (sama utk vertikal & horizontal).
+  const gapX = template === 'grid2x2' ? (branding.photoGap2x2X ?? 20) : (branding.photoGap ?? 20)
+  const gapY = template === 'grid2x2' ? (branding.photoGap2x2Y ?? 20) : (branding.photoGap ?? 20)
   const sidePad = 20
 
   const innerW = PRINT_WIDTH - sidePad * 2
@@ -138,7 +144,7 @@ export async function composeStrip(
 
   if (template === 'grid2x2') {
     cols = 2
-    shotW = (innerW - gap) / 2
+    shotW = (innerW - gapX) / 2
     shotH = Math.round(shotW * 0.75)
   } else if (template === 'single') {
     shotW = innerW
@@ -146,11 +152,11 @@ export async function composeStrip(
   }
 
   const rows = Math.ceil(imgs.length / cols)
-  const contentH = rows * shotH + (rows - 1) * gap
+  const contentH = rows * shotH + (rows - 1) * gapY
 
   const canvas = document.createElement('canvas')
   canvas.width = PRINT_WIDTH
-  canvas.height = headerH + contentH + footerH
+  canvas.height = headerH + topPad + contentH + bottomPad + footerH
   const ctx = canvas.getContext('2d')!
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -189,14 +195,14 @@ export async function composeStrip(
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (i >= imgs.length) break
-      const x = sidePad + c * (shotW + gap)
-      const y = headerH + r * (shotH + gap)
+      const x = sidePad + c * (shotW + gapX)
+      const y = headerH + topPad + r * (shotH + gapY)
       drawCover(ctx, imgs[i], x, y, shotW, shotH)
       i++
     }
   }
 
-  const fy = headerH + contentH
+  const fy = headerH + topPad + contentH + bottomPad
   ctx.textBaseline = 'alphabetic'
   ctx.fillStyle = '#000000' // pastikan teks footer (scan/date/watermark) hitam,
   // gak ikut fillStyle putih dari kotak logo di atas.
