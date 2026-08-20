@@ -23,7 +23,9 @@ export default defineConfig({
         // Jangan pakai index.html sebagai fallback untuk /portal — biar server
         // yang mengirim admin.html (dashboard). Tanpa ini, refresh di /portal
         // malah menampilkan index.html (app booth) => tampilan blank.
-        navigateFallbackDenylist: [/^\/portal/],
+        // Juga denylist /guides agar board panduan + README.html ke-serve mentah
+        // (bukan di-intercept SW jadi app).
+        navigateFallbackDenylist: [/^\/portal/, /^\/guides/],
         cleanupOutdatedCaches: true
       }
     })

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panduan Desain Bingkai Custom (Canva)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; color: #111; }
+  h1 { font-size: 1.6rem; } h2 { margin-top: 2rem; font-size: 1.25rem; }
+  code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+  th { background: #f3f4f6; }
+  .note { background: #fef3c7; padding: 10px 14px; border-left: 4px solid #f59e0b; }
+  a { color: #2563eb; }
+  ul { padding-left: 1.2rem; }
+</style>
+</head>
+<body>
+<h1>Panduan Desain Bingkai Custom (Canva)</h1>
+<p>Bingkai custom di-upload sebagai <strong>1 file PNG transparan</strong>, lalu di-STRETCH menutup SELURUH strip hasil (foto + logo + QR + tanggal + watermark) dan digambar paling atas.</p>
+
+<h2>Aturan wajib</h2>
+<ul>
+  <li><strong>Latar = transparan</strong> (PNG dengan background transparan di Canva, atau export PNG lalu pastikan bg kosong).</li>
+  <li><strong>Tengah HARUS transparan</strong> &rarr; supaya foto kelihatan.</li>
+  <li><strong>Bagian bawah (zona QR/tanggal/watermark ~200px) biarkan transparan</strong> &rarr; kalau diisi, QR &amp; teks ketutup.</li>
+  <li>Hanya <strong>tepi kiri/kanan + pojok</strong> yang boleh berwarna (tahan distorsi stretch).</li>
+</ul>
+
+<h2>Ukuran canvas (lebar SELALU 576px)</h2>
+<p>Tinggi bergantung template + toggle yang nyala. (Hitungan: header logo=266 / tanpa logo=64; footer all-on=308, tanpa QR=100.)</p>
+<table>
+  <tr><th>Template</th><th>Logo NYALA</th><th>Tanpa Logo</th></tr>
+  <tr><td><strong>3 Vertikal</strong></td><td>576 &times; 1800</td><td>576 &times; 1598</td></tr>
+  <tr><td><strong>1 Foto</strong></td><td>576 &times; 976</td><td>576 &times; 774</td></tr>
+  <tr><td><strong>2x2</strong></td><td>576 &times; 978</td><td>576 &times; 776</td></tr>
+</table>
+<div class="note">Tinggi berubah kalau toggle QR / tanggal / watermark dimatikan. Kalau ragu, desain di angka "all-on" (paling tinggi) lalu biarkan zona bawah transparan.</div>
+
+<h2>Board panduan siap import (file PNG transparan, di <code>/guides/</code>)</h2>
+<p>Gambar di dalam board (sudah berlabel, siap dicentang di Canva):</p>
+<ul>
+  <li><strong>Box MERAH + tulisan &ldquo;FOTO 1 / 2 / 3&rdquo;</strong> = slot foto persis &amp; urutannya (atas&rarr;bawah). Tiap slot proporsi <strong>4:3</strong> (lebar 536px, tinggi 402px di canvas 576).</li>
+  <li><strong>Garis putus-putus ABU-ABU</strong> = jarak antar foto (<strong>gap 10px</strong> di canvas). Jangan isi area ini.</li>
+  <li><strong>Tulisan &ldquo;LOGO / NAMA EVENT&rdquo;</strong> (atas) = zona merah logo.</li>
+  <li><strong>Box KUNING &ldquo;QR + TANGGAL + WATERMARK&rdquo;</strong> (bawah) = jangan diisi.</li>
+  <li>Tepi hitam + tanda pojok = suggested dekorasi.</li>
+</ul>
+<p>Import ke Canva sebagai lapisan bawah, lalu desain di atasnya (cuma tepi/pojok).</p>
+<p><strong>Logo NYALA:</strong></p>
+<ul>
+  <li><a href="guide-3vertikal.png">guide-3vertikal.png</a> (576&times;1800) &mdash; 3 slot FOTO 1/2/3</li>
+  <li><a href="guide-1foto.png">guide-1foto.png</a> (576&times;976) &mdash; 1 slot FOTO 1</li>
+  <li><a href="guide-2x2.png">guide-2x2.png</a> (576&times;978) &mdash; grid FOTO 1&ndash;4</li>
+</ul>
+<div style="display:flex; flex-wrap:wrap; gap:12px; margin:1rem 0;">
+  <img src="guide-3vertikal.png" alt="guide 3 vertikal" style="height:360px; border:1px solid #ccc; background:#fff;" />
+  <img src="guide-1foto.png" alt="guide 1 foto" style="height:360px; border:1px solid #ccc; background:#fff;" />
+  <img src="guide-2x2.png" alt="guide 2x2" style="height:360px; border:1px solid #ccc; background:#fff;" />
+</div>
+<p><strong>Tanpa Logo:</strong></p>
+<ul>
+  <li><a href="guide-nologo-3vertikal.png">guide-nologo-3vertikal.png</a> (576&times;1598)</li>
+  <li><a href="guide-nologo-1foto.png">guide-nologo-1foto.png</a> (576&times;774)</li>
+  <li><a href="guide-nologo-2x2.png">guide-nologo-2x2.png</a> (576&times;776)</li>
+</ul>
+<div style="display:flex; flex-wrap:wrap; gap:12px; margin:1rem 0;">
+  <img src="guide-nologo-3vertikal.png" alt="guide nologo 3 vertikal" style="height:360px; border:1px solid #ccc; background:#fff;" />
+  <img src="guide-nologo-1foto.png" alt="guide nologo 1 foto" style="height:360px; border:1px solid #ccc; background:#fff;" />
+  <img src="guide-nologo-2x2.png" alt="guide nologo 2x2" style="height:360px; border:1px solid #ccc; background:#fff;" />
+</div>
+
+<h2>Cara di Canva</h2>
+<ol>
+  <li>Buat desain ukuran custom: <strong>576 &times; (tinggi di atas)</strong>.</li>
+  <li>Background: biarkan kosong (transparan).</li>
+  <li>Gambar dekorasi cuma di <strong>tepi kiri &amp; kanan</strong> (full tinggi) + <strong>pojok</strong>.</li>
+  <li>JANGAN isi tengah &amp; jangan isi strip bawah ~200px.</li>
+  <li>Export &rarr; <strong>PNG</strong> (atur transparan).</li>
+  <li>Di app: Pengaturan (&#9881;) &rarr; Gallery Bingkai Custom &rarr; + Upload Bingkai.</li>
+  <li>Di layar hasil, klik thumbnail bingkai &rarr; preview &amp; cetak auto-update.</li>
+</ol>
+
+<h2>Catatan penting soal stretch</h2>
+<p>Satu bingkai di-stretch ke ukuran canvas aktif. Bingkai yang lo buat untuk 3 Vertikal (tinggi 1800) kalau dipakai di 1 Foto (976) akan <strong>melar vertikal</strong>. Solusi:</p>
+<ul>
+  <li>Buat <strong>1 bingkai per template</strong> (ukuran masing-masing di tabel), atau</li>
+  <li>Desain <strong>tepi + pojok saja</strong> (tanpa bentuk di tengah) &rarr; melar tidak merusak.</li>
+</ul>
+</body>
+</html>
