@@ -57,8 +57,18 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
     const s = useSession.getState()
     setEditMode(s.mode)
     setDraftPrice(s.mode === 'event' ? 0 : s.price)
-    setSelectedPreset(s.activePresetName || '')
+    const name = s.activePresetName || ''
+    setSelectedPreset(name)
     loadPresets(s.mode)
+    // Set snapshot dari preset aktif agar diff perubahan jalan sejak awal.
+    if (name) {
+      fetch(`/api/presets/${encodeURIComponent(name)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p) => {
+          if (p?.branding) setPresetSnapshot({ mode: p.mode, price: Number(p.price) || 0, branding: p.branding })
+        })
+        .catch(() => {})
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
