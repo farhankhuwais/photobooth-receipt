@@ -165,13 +165,22 @@ export default function App() {
     let active = true
     fetch('/api/config')
       .then((r) => (r.ok ? r.json() : null))
-      .then((cfg) => {
+      .then(async (cfg) => {
         if (!active || !cfg) return
         const st = useSession.getState()
         st.setMode(cfg.mode === 'event' ? 'event' : 'regular')
         st.setPrice(Number(cfg.price) || 5000)
         st.setActivePreset(cfg.preset_name || null)
-        if (cfg.branding) st.setBranding(cfg.branding)
+        // Prioritaskan branding dari preset aktif (termasuk jarak dekorasi),
+        // fallback ke branding app_config kalau preset gak ada.
+        let branding = cfg.branding
+        if (cfg.preset_name) {
+          try {
+            const p = await (await fetch(`/api/presets/${encodeURIComponent(cfg.preset_name)}`)).json()
+            if (p?.branding) branding = p.branding
+          } catch { /* ignore */ }
+        }
+        if (branding) st.setBranding(branding)
       })
       .catch(() => {})
     return () => { active = false }

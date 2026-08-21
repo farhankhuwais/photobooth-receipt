@@ -90,6 +90,19 @@ app.get('/api/presets/:name', async (req, res) => {
     res.status(500).json({ error: String(e) })
   }
 })
+// Update preset yang sudah ada (by name) — untuk edit tanpa bikin duplikat.
+app.put('/api/presets/:name', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const oldName = req.params.name
+    const { mode, price, branding } = req.body || {}
+    const m = mode === 'event' ? 'event' : 'regular'
+    const p = m === 'event' ? 0 : (price === 0 ? 0 : Number(price) || 5000)
+    const saved = await savePreset(oldName, m, p, branding ?? {})
+    res.json({ ok: true, name: saved, mode: m, updated: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
 // Hapus preset by name.
 app.delete('/api/presets/:name', async (req, res) => {
   try {
