@@ -526,7 +526,6 @@ export default function App() {
                   <>
                     <div className="flex items-center justify-between">
                       <span className="font-headline-md-mobile md:text-headline-md font-black uppercase tracking-wider text-on-surface">Pilih Desain ({grid} Foto)</span>
-                      <button onClick={() => setStep(1)} className="px-3 py-2 border-4 border-black bg-surface text-on-surface font-label-bold uppercase text-[12px] neo-button">Kembali</button>
                     </div>
 
                     {designs.filter((d) => (d.slotsCount || 0) === grid).length === 0 ? (
