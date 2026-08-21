@@ -242,6 +242,12 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
             branding: useSession.getState().branding,
           }),
         })
+        // Refresh snapshot ke state sekarang -> perubahan jadi 0 (tersimpan).
+        setPresetSnapshot({
+          mode: editMode,
+          price: editMode === 'event' ? 0 : draftPrice,
+          branding: { ...useSession.getState().branding },
+        })
         await loadPresets(editMode)
       } else {
         // Buat preset baru.
