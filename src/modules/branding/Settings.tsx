@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { TemplateId, useSession, AppMode } from '../../store/useSession'
+import { DesignEditor } from './DesignEditor'
 
 export function Settings({ onClose, onAttractChange }: { onClose: () => void; onAttractChange?: () => void }) {
   const { branding, template, bridgeUrl, frames, mode, price, setBranding, setTemplate, setBridgeUrl, setMode, setPrice, applyConfig } = useSession()
@@ -521,6 +522,9 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
             ))}
           </div>
         </div>
+
+        {/* Editor Design Mockup — drag-drop slot foto */}
+        <DesignEditor />
 
         {/* Layar Awal (Attract) — background + ikon sentuh per mode */}
         <div className="flex flex-col gap-1 font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px] border-t-4 border-black pt-3">

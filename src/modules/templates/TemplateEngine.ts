@@ -106,14 +106,128 @@ function drawFrame(
   ctx.restore()
 }
 
+// Satu "design" = mockup kustom: bingkai PNG (opsional) + slot foto bebas.
+export interface DesignSlot {
+  x: number; y: number; w: number; h: number; rot?: number  // derajat, CW
+}
+export interface DesignDef {
+  id: string
+  name: string
+  frameUrl: string | null   // endpoint SVG/PNG bingkai
+  canvasW: number
+  canvasH: number
+  slots: DesignSlot[]       // dalam koordinat PRINT_WIDTH (576 lebar)
+}
+
+// Gambar satu foto ke slot (bisa diputar). cover-fit ke dalam w x h.
+function drawSlot(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  s: DesignSlot
+) {
+  const rot = s.rot || 0
+  ctx.save()
+  ctx.translate(s.x + s.w / 2, s.y + s.h / 2)
+  if (rot) ctx.rotate((rot * Math.PI) / 180)
+  // clip ke kotak slot biar foto nggak tumpah kalau miring/cover.
+  ctx.beginPath()
+  ctx.rect(-s.w / 2, -s.h / 2, s.w, s.h)
+  ctx.clip()
+  drawCover(ctx, img, -s.w / 2, -s.h / 2, s.w, s.h)
+  ctx.restore()
+}
+
+export async function composeDesign(
+  shots: string[],
+  branding: BrandingConfig,
+  design: DesignDef,
+  qrOverride?: string | null
+): Promise<HTMLCanvasElement> {
+  const imgs = await Promise.all(shots.map(loadImage))
+  const qrText = qrOverride ?? branding.qrText
+  const qr = qrText ? await loadImage(await qrDataUrl(qrText)) : null
+
+  // Footer (QR / tanggal / watermark) persis seperti composeStrip.
+  let footerH = 12
+  if (qr) footerH += 180 + (branding.qrText ? 28 : 8)
+  if (branding.showDate) footerH += 34
+  if (branding.watermark) footerH += 44
+  footerH += 10
+  if (footerH < (branding.watermark ? 56 : 48)) footerH = branding.watermark ? 56 : 48
+
+  // Canvas = PRINT_WIDTH lebar; tinggi = tinggi design (diskala dari canvasW) + footer.
+  const scale = PRINT_WIDTH / design.canvasW
+  const designH = Math.round(design.canvasH * scale)
+  const canvas = document.createElement('canvas')
+  canvas.width = PRINT_WIDTH
+  canvas.height = designH + footerH
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  // NOTE: di mode design, logo/eventName TIDAK digambar di sini (biarkan murni
+  // sesuai editor & bingkai). Header di composeStrip sengaja di-skip agar
+  // posisi slot foto WYSIWYG dengan editor.
+
+  // Foto ke slot bebas (miring boleh). Sisa slot diisi pola abu kalau foto kurang.
+  for (let i = 0; i < design.slots.length; i++) {
+    const s = design.slots[i]
+    if (imgs[i]) drawSlot(ctx, imgs[i], s)
+    else { ctx.fillStyle = '#dddddd'; ctx.fillRect(s.x, s.y, s.w, s.h) }
+  }
+
+  // Bingkai design (PNG/SVG) menimpa hasil, diskala ke canvas penuh.
+  if (design.frameUrl) {
+    try {
+      const g = await loadImage(design.frameUrl)
+      ctx.drawImage(g, 0, 0, canvas.width, designH)
+    } catch { /* ignore frame gagal */ }
+  }
+
+  // Footer: QR → scan text → tanggal → watermark.
+  const fy = designH
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#000000'
+  let cursorY = fy + 10
+  if (qr) {
+    const qz = 180
+    ctx.drawImage(qr, (PRINT_WIDTH - qz) / 2, cursorY, qz, qz)
+    cursorY += qz + 6
+    if (branding.qrText) {
+      ctx.font = '13px sans-serif'
+      ctx.fillText('scan untuk foto digital', PRINT_WIDTH / 2, cursorY + 16)
+      cursorY += 30
+    }
+    if (branding.showDate) {
+      ctx.font = '18px sans-serif'
+      ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
+      cursorY += 34
+    }
+  } else if (branding.showDate) {
+    ctx.font = '18px sans-serif'
+    ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
+    cursorY += 34
+  }
+  if (branding.watermark) {
+    ctx.font = '15px sans-serif'
+    ctx.fillStyle = '#000000'
+    ctx.fillText(branding.watermark, PRINT_WIDTH / 2, canvas.height - 22)
+  }
+
+  return canvas
+}
+
 export async function composeStrip(
   shots: string[],
   branding: BrandingConfig,
   template: string = 'strip3',
   qrOverride?: string | null,
   frames: FrameDef[] = [],
-  selectedFrameId: string | null = null
+  selectedFrameId: string | null = null,
+  design: DesignDef | null = null
 ): Promise<HTMLCanvasElement> {
+  // Mode design (mockup bebas) — delegasikan.
+  if (design) return composeDesign(shots, branding, design, qrOverride)
   const imgs = await Promise.all(shots.map(loadImage))
   const logo = branding.logoDataUrl ? await loadImage(branding.logoDataUrl) : null
   const qrText = qrOverride ?? branding.qrText
@@ -145,6 +259,10 @@ export async function composeStrip(
   if (template === 'grid2x2') {
     cols = 2
     shotW = (innerW - gapX) / 2
+    shotH = Math.round(shotW * 0.75)
+  } else if (template === 'dual') {
+    cols = 1
+    shotW = innerW
     shotH = Math.round(shotW * 0.75)
   } else if (template === 'single') {
     shotW = innerW

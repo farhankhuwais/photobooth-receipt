@@ -392,6 +392,7 @@ export async function listDesigns() {
   const r = await pool.query(
     `SELECT id, name, canvas_w, canvas_h, created_at,
             COALESCE(jsonb_array_length(slots), 0) AS slots_count,
+            slots AS slots_raw,
             (frame_data IS NOT NULL) AS has_frame
      FROM designs ORDER BY created_at ASC`
   )
@@ -401,6 +402,7 @@ export async function listDesigns() {
     canvasW: row.canvas_w,
     canvasH: row.canvas_h,
     slotsCount: Number(row.slots_count),
+    slots: typeof row.slots_raw === 'string' ? JSON.parse(row.slots_raw) : (row.slots_raw || []),
     hasFrame: row.has_frame,
   }))
 }

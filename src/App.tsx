@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useSession } from './store/useSession'
+import { useSession, type TemplateId } from './store/useSession'
 import { useCamera } from './modules/camera/useCamera'
 import { composeStrip } from './modules/templates/TemplateEngine'
 import { printSmart } from './modules/print/printService'
@@ -12,7 +12,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
+  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [msg, setMsg] = useState<string>('')
@@ -112,6 +112,9 @@ export default function App() {
   useEffect(() => {
     if (screen !== 'booth') return
     setStep(1); setGrid(null); setArmed(false)
+    useSession.getState().setSelectedDesignId(null)
+    useSession.getState().setDesign(null)
+    useSession.getState().setDesignChosen(false)
     loadDesigns()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen])
@@ -123,7 +126,13 @@ export default function App() {
     if (!id) {
       st.setSelectedDesignId(null)
       st.setDesign(null)
+      // Template polos bawaan menyesuaikan jumlah foto:
+      // 1=single, 2=dual(atbawah), 3=strip3, 4=grid2x2.
+      const tpl: TemplateId = grid === 1 ? 'single' : grid === 2 ? 'dual' : grid === 4 ? 'grid2x2' : 'strip3'
+      st.setTemplate(tpl)
+      st.setDesignChosen(true)
       useSession.setState({ shotCount: grid ?? 1 })
+      st.setStatus('capturing')
       return
     }
     const d = await fetch(`/api/designs/${id}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
@@ -145,8 +154,10 @@ export default function App() {
       slots,
     })
     st.setSelectedDesignId(id)
+    st.setDesignChosen(true)
     // Jumlah foto = jumlah slot design (override template).
     useSession.setState({ shotCount: slots.length })
+    st.setStatus('capturing')
   }
 
   // Load active config dari DB saat boot (survive refresh).
@@ -411,14 +422,15 @@ export default function App() {
         </main>
       ) : (
         <>
-          {/* Header */}
+          {/* Header — disembunyikan di layar hasil (done) karena sudah ada tombol AKHIRI SESI */}
+          {status !== 'done' && (
           <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-[#FFE600] border-b-4 border-black brutal-shadow-sm">
             <button
                             onClick={() => (screen === 'booth' && status === 'idle' ? (step === 1 ? goAttract() : setStep(1)) : onReset())}
                             title={screen === 'booth' && status === 'idle' ? 'Kembali' : 'Mulai ulang sesi'}
                             className="flex items-center justify-center w-10 h-10 border-2 border-black bg-surface rounded hover:bg-surface-variant neo-button neo-btn-hover brutal-shadow-sm"
             >
-              <span className="material-symbols-outlined text-on-surface">{screen === 'booth' && status === 'idle' ? 'arrow_back' : 'restart_alt'}</span>
+              <span className="material-symbols-outlined text-on-surface">{screen === 'booth' && status === 'idle' ? 'arrow_back' : (status === 'capturing' ? 'arrow_back' : 'restart_alt')}</span>
             </button>
             <div className="flex flex-col items-center">
               <h1 className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface uppercase tracking-tight">Photobooth 📸</h1>
@@ -426,6 +438,7 @@ export default function App() {
             </div>
             <div className="w-10 h-10" />
           </header>
+          )}
 
           {error && (
             <div className="w-full max-w-md mx-auto mt-[80px] bg-error-container border-4 border-black text-on-error-container font-label-bold p-3 brutal-shadow-sm">
@@ -539,7 +552,7 @@ export default function App() {
                           <button
                             key={d.id}
                             onClick={() => pickDesign(d.id)}
-                            className={`relative border-4 ${selectedDesignId === d.id ? 'border-primary-container bg-primary-container/20' : 'border-black bg-surface hover:bg-surface-variant'} neo-button overflow-hidden flex flex-col items-stretch`}
+                            className={`relative border-4 ${selectedDesignId === d.id ? 'border-[#ba1a1a] bg-[#ba1a1a]/20' : 'border-black bg-surface hover:bg-[#ff8a80]'} neo-button overflow-hidden flex flex-col items-stretch`}
                           >
                             <div className="relative w-full bg-white" style={{ aspectRatio: `${d.canvasW || 308} / ${d.canvasH || 454}` }}>
                               {d.hasFrame ? (
@@ -549,10 +562,30 @@ export default function App() {
                                   <span className="material-symbols-outlined text-[48px]">photo_frame</span>
                                 </div>
                               )}
-                              {/* angka urut tiap slot = info letak foto */}
-                              {Array.from({ length: d.slotsCount || 0 }).map((_, i) => (
-                                <span key={i} className="absolute bg-black/70 text-white text-[10px] font-black px-1 leading-tight rounded-sm">{i + 1}</span>
-                              ))}
+                              {/* angka urut tiap slot, diposisikan di letak foto beneran */}
+                              {(d.slots && d.slots.length ? d.slots : Array.from({ length: d.slotsCount || 0 }, () => ({ x: 0, y: 0, w: d.canvasW || 308, h: d.canvasH || 454 }))).map((s: any, i: number) => {
+                                const cw = d.canvasW || 308
+                                const ch = d.canvasH || 454
+                                const left = (s.x / cw) * 100
+                                const top = (s.y / ch) * 100
+                                const width = (s.w / cw) * 100
+                                const height = (s.h / ch) * 100
+                                return (
+                                  <span
+                                    key={i}
+                                    className="absolute flex items-center justify-center bg-black/80 text-white text-[10px] font-black leading-none rounded-sm border border-white/60 pointer-events-none"
+                                    style={{
+                                      left: `${left}%`,
+                                      top: `${top}%`,
+                                      width: `${width}%`,
+                                      height: `${height}%`,
+                                      transform: s.rot ? `rotate(${s.rot}deg)` : undefined,
+                                    }}
+                                  >
+                                    {i + 1}
+                                  </span>
+                                )
+                              })}
                               {selectedDesignId === d.id && (
                                 <span className="absolute top-1 right-1 bg-primary-container text-on-primary-container border-2 border-black px-1 text-[10px] font-black">PILIH</span>
                               )}
@@ -565,17 +598,27 @@ export default function App() {
 
                     <button
                       onClick={() => pickDesign(null)}
-                      className={`flex-none px-3 py-2 border-4 border-black neo-button font-label-bold text-label-bold uppercase text-[12px] self-start ${!selectedDesignId ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
-                    >Template Biasa</button>
-
-                    <button
-                                    onClick={() => useSession.getState().setStatus('capturing')}
-                                    className="w-full py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button neo-btn-hover flex items-center justify-center gap-sm relative overflow-hidden group"
+                      className={`flex-none border-4 ${!selectedDesignId ? 'border-[#ba1a1a] bg-[#ba1a1a]/20' : 'border-black bg-surface hover:bg-[#ff8a80]'} neo-button overflow-hidden flex flex-col items-stretch self-start w-[140px]`}
                     >
-                      <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
-                      <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Lanjutkan ke Kamera</span>
-                      <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>arrow_forward</span>
+                      <div className="relative w-full bg-white" style={{ aspectRatio: '308 / 454' }}>
+                        {/* Logo di atas (kalau ada) */}
+                        {branding.logoDataUrl ? (
+                          <img src={branding.logoDataUrl} alt="" className="absolute top-1 left-1/2 -translate-x-1/2 w-[70%] h-[80px] object-contain pointer-events-none" />
+                        ) : null}
+                        {/* Layout polos bawaan sesuai jumlah foto:
+                            1/3 = vertikal (1 kolom), 2 = atas-bawah (1 kolom), 4 = 2x2 grid */}
+                        <div className={`absolute inset-x-2 bottom-2 top-[88px] gap-1 ${grid === 4 ? 'grid grid-cols-2 grid-rows-2' : 'flex flex-col justify-center'}`}>
+                          {Array.from({ length: grid ?? 1 }).map((_, i) => (
+                            <div key={i} className="w-full h-full bg-[#e6e6e6] border-2 border-dashed border-black/40" />
+                          ))}
+                        </div>
+                        {selectedDesignId === null && designChosen && (
+                          <span className="absolute top-1 right-1 bg-primary-container text-on-primary-container border-2 border-black px-1 text-[10px] font-black">PILIH</span>
+                        )}
+                      </div>
+                      <span className="px-2 py-1 font-label-bold text-label-bold text-on-surface uppercase text-left text-[11px] truncate">Template Biasa</span>
                     </button>
+
                   </>
                 )}
               </div>

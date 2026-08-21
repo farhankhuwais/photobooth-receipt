@@ -109,7 +109,9 @@ def png(path, buf):
 def build(header, kind, name):
     global H
     innerW = W - 40
-    gap = 10
+    gap = 200
+    topPad = 200
+    bottomPad = 200
     if kind == 'strip3':
         cols = 1
     elif kind == 'single':
@@ -120,10 +122,10 @@ def build(header, kind, name):
     shotH = round(shotW * 0.75)
     rows = 1 if kind == 'single' else (3 if kind == 'strip3' else 2)
     contentH = rows*shotH + (rows-1)*gap
-    H = header + contentH + FOOTER
+    H = header + topPad + contentH + bottomPad + FOOTER
 
     buf = new()
-    ph_top = header
+    ph_top = header + topPad
     # draw slots
     if kind == 'single':
         rect(buf, 20, ph_top, W-20, ph_top+shotH, RED, 3)

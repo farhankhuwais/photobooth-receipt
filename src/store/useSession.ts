@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { DesignDef } from '../modules/templates/TemplateEngine'
 
-export type TemplateId = 'strip3' | 'grid2x2' | 'single'
+export type TemplateId = 'strip3' | 'grid2x2' | 'single' | 'dual'
 export type FrameId = 'none' | 'love' | 'party' | 'vintage' | 'neon' | 'floral'
 export type Screen = 'attract' | 'booth'
 export type PaymentMethod = 'qris' | 'cash'
@@ -45,9 +45,12 @@ interface SessionState {
   frames: FrameDef[]
   selectedFrameId: string | null
   // Gallery design/mockup kustom (dari DB) + pilihan customer.
-  designs: { id: string; name: string; canvasW: number; canvasH: number; slotsCount?: number; hasFrame?: boolean }[]
+  designs: { id: string; name: string; canvasW: number; canvasH: number; slotsCount?: number; slots?: { x: number; y: number; w: number; h: number; rot?: number }[]; hasFrame?: boolean }[]
   selectedDesignId: string | null
   design: DesignDef | null
+  // True setelah user memilih desain (termasuk Template Biasa). Wajib true
+  // sebelum bisa lanjut ke kamera.
+  designChosen: boolean
   // Mode booth: 'regular' (bayar per cetak) atau 'event' (jasa, gratis/tanpa paywall).
   mode: AppMode
   price: number
@@ -69,6 +72,7 @@ interface SessionState {
   setSelectedFrameId: (id: string | null) => void
   setDesigns: (d: { id: string; name: string; canvasW: number; canvasH: number }[]) => void
   setSelectedDesignId: (id: string | null) => void
+  setDesignChosen: (v: boolean) => void
   setDesign: (d: DesignDef | null) => void
   setMode: (m: AppMode) => void
   setPrice: (p: number) => void
@@ -90,7 +94,7 @@ interface SessionState {
   resetPay: () => void
 }
 
-const countFor = (t: TemplateId) => (t === 'grid2x2' ? 4 : t === 'single' ? 1 : 3)
+const countFor = (t: TemplateId) => (t === 'grid2x2' ? 4 : t === 'single' ? 1 : t === 'dual' ? 2 : 3)
 
 export const DEFAULT_BRANDING: BrandingConfig = {
   eventName: 'My Event',
@@ -137,6 +141,7 @@ export const useSession = create<SessionState>((set) => ({
   designs: [],
   selectedDesignId: null,
   design: null,
+  designChosen: false,
   mode: 'regular',
   price: 5000,
   activePresetName: null,
@@ -157,6 +162,7 @@ export const useSession = create<SessionState>((set) => ({
   setSelectedFrameId: (id) => set({ selectedFrameId: id }),
   setDesigns: (designs) => set({ designs }),
   setSelectedDesignId: (id) => set({ selectedDesignId: id }),
+  setDesignChosen: (v: boolean) => set({ designChosen: v }),
   setDesign: (design) => set({ design }),
   setMode: (mode) => set({ mode }),
   setPrice: (price) => set({ price }),
@@ -190,9 +196,9 @@ export const useSession = create<SessionState>((set) => ({
   setPaid: (paid) => set({ paid }),
   setBridgeUrl: (u) => set({ bridgeUrl: u }),
   setDigitalUrl: (u) => set({ digitalUrl: u }),
-  enterBooth: () => set({ screen: 'booth', status: 'idle', shots: [], digitalUrl: null, paid: false, paymentMethod: null, payStage: 'idle', cashConfirm: false }),
+  enterBooth: () => set({ screen: 'booth', status: 'idle', shots: [], digitalUrl: null, paid: false, paymentMethod: null, payStage: 'idle', cashConfirm: false, designChosen: false }),
   goAttract: () =>
-    set({ screen: 'attract', status: 'idle', shots: [], digitalUrl: null, paid: false, paymentMethod: null, payStage: 'idle', cashConfirm: false }),
+    set({ screen: 'attract', status: 'idle', shots: [], digitalUrl: null, paid: false, paymentMethod: null, payStage: 'idle', cashConfirm: false, designChosen: false }),
   // Buka layar bayar (gerbang CETAK). Belum lunas.
   openPay: () => set({ payStage: 'paying', paymentMethod: null, cashConfirm: false }),
   // Batal bayar, kembali ke layar hasil.
