@@ -12,7 +12,11 @@
   header h1 { margin:0; font-size:20px; font-weight:900; text-transform:uppercase; letter-spacing:-0.5px; }
   .layout { display:flex; min-height:calc(100vh - 64px); }
   /* Sidebar */
-  .sidebar { width:220px; flex:0 0 220px; background:var(--side); color:#fff; padding:14px 10px; display:flex; flex-direction:column; gap:6px; }
+  .sidebar { width:220px; flex:0 0 220px; background:var(--side); color:#fff; padding:14px 10px; display:flex; flex-direction:column; gap:6px; transition:width .15s, padding .15s; }
+  .sidebar.hidden { display:none; }
+  .menu-btn { background:#fff; color:#000; border:3px solid #000; width:44px; height:44px; font-size:20px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; box-shadow:3px 3px 0 #000; }
+  .menu-btn:hover { background:#000; color:#fff; }
+  .menu-btn:active { box-shadow:0 0 0 #000; transform:translate(3px,3px); }
   .sidebar .navbtn { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:12px 14px; font-size:14px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#fff; background:transparent; border:2px solid transparent; cursor:pointer; border-radius:4px; }
   .sidebar .navbtn:hover { background:var(--side-hover); }
   .sidebar .navbtn.active { background:#fff; color:#000; }
@@ -63,6 +67,12 @@
   .filters button { padding:10px 14px; font-weight:800; text-transform:uppercase; cursor:pointer; border:3px solid #000; }
   .filters button.apply { background:#000; color:#fff; }
   .filters button.apply:hover { background:#fff; color:#000; }
+  /* Photos grid checkbox + select state */
+  .photocard { position:relative; }
+  .photocard.sel { outline:4px solid #ef4444; outline-offset:2px; }
+  .photocard .pick { position:absolute; top:6px; left:6px; width:28px; height:28px; cursor:pointer; }
+  .photocard .del { position:absolute; top:6px; right:6px; width:32px; height:32px; font-size:16px; cursor:pointer; background:#ef4444; color:#fff; border:2px solid #000; display:inline-flex; align-items:center; justify-content:center; }
+  .photocard .del:hover { background:#000; color:#ef4444; }
   button.csv { background:#bbf7d0; color:#000; }
   button.csv:hover { background:#000; color:#bbf7d0; }
   button.iconbtn { background:transparent; color:#000; border:3px solid #000; box-shadow:3px 3px 0 #000; width:44px; height:44px; font-size:20px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
@@ -104,7 +114,10 @@
 </head>
 <body>
 <header>
-  <h1>📸 Photobooth Admin</h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <button class="menu-btn" title="Buka/Tutup menu" onclick="toggleSidebar()">☰</button>
+    <h1>📸 Photobooth Admin</h1>
+  </div>
   <div id="headerActions" style="display:none">
     <button class="iconbtn guide" title="Panduan Bingkai Canva" onclick="window.open('/guides/README.html','_blank')">📐</button>
     <button class="iconbtn pw" title="Ganti Password" onclick="showPwPanel()">🔑</button>
@@ -185,9 +198,34 @@
 
     <!-- VIEW: Foto -->
     <div class="wrap" id="viewPhotos" style="display:none">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px; flex-wrap:wrap;">
         <h2 style="margin:0">🖼️ Foto Hasil (DB)</h2>
-        <button class="refresh" onclick="loadPhotos()">↻ Refresh</button>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button class="refresh" onclick="loadPhotos()">↻ Refresh</button>
+          <button class="apply" id="bulkDelBtn" style="display:none; background:#ef4444; color:#fff; border-color:#000;" onclick="bulkDelete()">🗑 Hapus Terpilih (<span id="selCount">0</span>)</button>
+        </div>
+      </div>
+      <div class="filters">
+        <div class="field">
+          <label for="pfrom">Dari</label>
+          <input id="pfrom" type="date" />
+        </div>
+        <div class="field">
+          <label for="pto">Sampai</label>
+          <input id="pto" type="date" />
+        </div>
+        <button class="apply" onclick="applyPhotoFilter()">Terapkan</button>
+        <button class="apply" onclick="resetPhotoFilter()">Reset</button>
+        <div class="quickgroup">
+          <span class="qlabel">Cepat:</span>
+          <button class="quick" onclick="photoQuick('today')">Hari Ini</button>
+          <button class="quick" onclick="photoQuick('7d')">7 Hari</button>
+          <button class="quick" onclick="photoQuick('30d')">30 Hari</button>
+        </div>
+        <div class="spacer"></div>
+        <label style="display:flex; align-items:center; gap:6px; font-weight:800; text-transform:uppercase; font-size:12px; cursor:pointer;">
+          <input type="checkbox" id="selAll" onchange="toggleSelectAll(this.checked)" /> Pilih Semua
+        </label>
       </div>
       <div id="photoErr"></div>
       <div class="photogrid" id="photogrid"><div style="opacity:.6; font-weight:800;">memuat…</div></div>
@@ -227,6 +265,11 @@ const PAGE_SIZE = 25
 let allTx = []
 let page = 1
 let currentView = 'dash'
+
+function toggleSidebar() {
+  const sb = document.querySelector('.sidebar')
+  if (sb) sb.classList.toggle('hidden')
+}
 
 function showView(v) {
   currentView = v
@@ -367,31 +410,126 @@ async function load() {
 }
 
 // ── Photos view ──
+let selectedPhotos = new Set()
 async function loadPhotos() {
   const grid = document.getElementById('photogrid')
   const errEl = document.getElementById('photoErr')
   errEl.style.display = 'none'
+  const from = document.getElementById('pfrom').value
+  const to = document.getElementById('pto').value
+  const qs = new URLSearchParams()
+  qs.set('limit', '500')
+  if (from) qs.set('from', from)
+  if (to) qs.set('to', to)
   grid.innerHTML = '<div style="opacity:.6; font-weight:800;">memuat…</div>'
   try {
-    const rows = await fetch('/portal/api/photos?limit=200').then(r => {
+    const rows = await fetch('/portal/api/photos?' + qs.toString()).then(r => {
       if (!r.ok) throw new Error('photos ' + r.status)
       return r.json()
     })
     if (!rows.length) {
       grid.innerHTML = '<div style="opacity:.7; font-weight:800;">belum ada foto di DB</div>'
+      document.getElementById('selAll').checked = false
+      updateSelCount()
       return
     }
-    grid.innerHTML = rows.map(p => `
-      <div class="photocard">
+    grid.innerHTML = rows.map(p => {
+      const sel = selectedPhotos.has(p.id) ? 'sel' : ''
+      const chk = selectedPhotos.has(p.id) ? 'checked' : ''
+      return `
+      <div class="photocard ${sel}" id="pc-${p.id}">
+        <input type="checkbox" class="pick" ${chk} onchange="togglePick('${p.id}', this.checked)" title="Pilih" />
+        <button class="del" title="Hapus" onclick="delPhoto('${p.id}')">🗑</button>
         <img src="${p.url}" alt="${p.id}" onclick="openLb('${p.url}')" loading="lazy" />
         <div class="meta">${fmtTime(p.created_at)}</div>
         <a href="${p.url}" target="_blank" rel="noreferrer">⬇ Buka</a>
-      </div>
-    `).join('')
+      </div>`
+    }).join('')
+    syncSelAll()
   } catch (e) {
     if (String(e.message).includes('401')) { showLogin(); return }
     errEl.textContent = 'Gagal muat foto: ' + e.message
     errEl.style.display = 'block'
+  }
+}
+function togglePick(id, on) {
+  if (on) selectedPhotos.add(id); else selectedPhotos.delete(id)
+  const pc = document.getElementById('pc-' + id)
+  if (pc) pc.classList.toggle('sel', on)
+  syncSelAll()
+  updateSelCount()
+}
+function toggleSelectAll(on) {
+  document.querySelectorAll('.photocard').forEach(card => {
+    const id = card.id.replace('pc-', '')
+    if (on) selectedPhotos.add(id); else selectedPhotos.delete(id)
+    card.classList.toggle('sel', on)
+    const cb = card.querySelector('.pick'); if (cb) cb.checked = on
+  })
+  updateSelCount()
+}
+function syncSelAll() {
+  const cards = document.querySelectorAll('.photocard')
+  const all = cards.length > 0 && [...cards].every(c => selectedPhotos.has(c.id.replace('pc-', '')))
+  document.getElementById('selAll').checked = all
+}
+function updateSelCount() {
+  const n = selectedPhotos.size
+  document.getElementById('selCount').textContent = n
+  document.getElementById('bulkDelBtn').style.display = n > 0 ? 'inline-block' : 'none'
+}
+function applyPhotoFilter() {
+  const from = document.getElementById('pfrom').value
+  const to = document.getElementById('pto').value
+  if (from && to && to < from) {
+    const e = document.getElementById('photoErr'); e.textContent = 'Tanggal "Sampai" harus ≥ "Dari"'; e.style.display = 'block'; return
+  }
+  loadPhotos()
+}
+function resetPhotoFilter() {
+  document.getElementById('pfrom').value = ''
+  document.getElementById('pto').value = ''
+  loadPhotos()
+}
+function photoQuick(kind) {
+  const now = new Date()
+  let from
+  if (kind === 'today') from = ymd(now)
+  else if (kind === '7d') { const d = new Date(now); d.setDate(d.getDate() - 6); from = ymd(d) }
+  else if (kind === '30d') { const d = new Date(now); d.setDate(d.getDate() - 29); from = ymd(d) }
+  else return
+  document.getElementById('pfrom').value = from
+  document.getElementById('pto').value = ymd(now)
+  loadPhotos()
+}
+async function delPhoto(id) {
+  if (!window.confirm('Hapus foto ini?')) return
+  try {
+    const r = await fetch('/portal/api/photos/' + encodeURIComponent(id), { method: 'DELETE' })
+    if (!r.ok) throw new Error('delete ' + r.status)
+    selectedPhotos.delete(id)
+    updateSelCount()
+    loadPhotos()
+  } catch (e) {
+    if (String(e.message).includes('401')) { showLogin(); return }
+    alert('Gagal hapus: ' + e.message)
+  }
+}
+async function bulkDelete() {
+  const ids = [...selectedPhotos]
+  if (!ids.length) return
+  if (!window.confirm('Hapus ' + ids.length + ' foto terpilih?')) return
+  try {
+    for (const id of ids) {
+      await fetch('/portal/api/photos/' + encodeURIComponent(id), { method: 'DELETE' })
+    }
+    selectedPhotos.clear()
+    updateSelCount()
+    document.getElementById('selAll').checked = false
+    loadPhotos()
+  } catch (e) {
+    if (String(e.message).includes('401')) { showLogin(); return }
+    alert('Gagal hapus: ' + e.message)
   }
 }
 function openLb(url) {

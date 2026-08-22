@@ -277,13 +277,23 @@ export async function getPhoto(id) {
   return r.rows[0]?.data || null
 }
 
-// Daftar foto terbaru (tanpa data blob, cukup id + waktu) untuk dashboard admin.
-export async function listPhotos({ limit = 100 } = {}) {
+// Daftar foto (terbaru dulu). Filter by tanggal optional (from/to, format YYYY-MM-DD).
+export async function listPhotos({ limit = 100, from = null, to = null } = {}) {
+  const where = []
+  const params = []
+  if (from) { params.push(from + ' 00:00:00'); where.push(`created_at >= $${params.length}`) }
+  if (to) { params.push(to + ' 23:59:59'); where.push(`created_at <= $${params.length}`) }
+  const w = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const r = await pool.query(
-    'SELECT id, created_at FROM photos ORDER BY created_at DESC LIMIT $1',
-    [limit]
+    `SELECT id, created_at FROM photos ${w} ORDER BY created_at DESC LIMIT ${Number(limit) || 100}`,
+    params
   )
   return r.rows
+}
+
+// Hapus satu foto by id.
+export async function deletePhoto(id) {
+  await pool.query('DELETE FROM photos WHERE id = $1', [id])
 }
 
 // ── Presets (konfigurasi bernama, bisa banyak) — tiap preset punya mode sendiri ──

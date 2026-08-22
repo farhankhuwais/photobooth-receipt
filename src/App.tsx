@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSession, type TemplateId } from './store/useSession'
 import { useCamera } from './modules/camera/useCamera'
 import { composeStrip } from './modules/templates/TemplateEngine'
+import { qrDataUrl } from './modules/qr/qr'
 import { printSmart } from './modules/print/printService'
-import { shareImage } from './modules/share/share'
-import { uploadStrip, uploadStripLocal } from './modules/share/upload'
+import { uploadStripLocal } from './modules/share/upload'
 import { buildPrintJob } from './modules/escpos/encoder'
 import { Settings } from './modules/branding/Settings'
 
@@ -15,6 +15,10 @@ export default function App() {
   const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
+  const [qrData, setQrData] = useState<string | null>(null)    // QR hasil (cache, persist walau overlay ditutup)
+  const [qrOpen, setQrOpen] = useState(false)                  // overlay QR visible?
+  const [qrPos, setQrPos] = useState<{ x: number; y: number } | null>(null)  // posisi bubble (null = default pojok)
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null)
   const [msg, setMsg] = useState<string>('')
   const [showSettings, setShowSettings] = useState(false)
   const [step, setStep] = useState<1 | 2>(1)     // 1=pilih grid, 2=pilih desain
@@ -218,21 +222,9 @@ export default function App() {
   async function finishCompose() {
     const s = useSession.getState()
     if (!s.shots.length) return
-    let qrUrl: string | null = s.digitalUrl
-    // Upload hasil ke server agar QR = link download langsung.
-    // Prioritas: bridge Node (kalau diisi) -> server sendiri (default).
-    const first = await composeStrip(s.shots, s.branding, s.template, '', s.frames, s.selectedFrameId, s.design)
-    try {
-      if (s.bridgeUrl) {
-        qrUrl = await uploadStrip(first.toDataURL('image/png'), s.bridgeUrl)
-      } else {
-        qrUrl = await uploadStripLocal(first.toDataURL('image/png'))
-      }
-      useSession.getState().setDigitalUrl(qrUrl)
-    } catch {
-      qrUrl = null
-    }
-    const canvas = await composeStrip(s.shots, s.branding, s.template, qrUrl, s.frames, s.selectedFrameId, s.design)
+    // Hasil kertas BERSIH — tidak ada QR & tidak auto-upload ke DB.
+    // QR + upload ke DB hanya terjadi saat user klik tombol "QR HASIL".
+    const canvas = await composeStrip(s.shots, s.branding, s.template, null, s.frames, s.selectedFrameId, s.design)
     stripCanvas.current = canvas
     setStripUrl(canvas.toDataURL('image/png'))
   }
@@ -268,10 +260,31 @@ export default function App() {
   }
 
   // Saat customer ganti bingkai custom (gallery), compose ulang preview hasil.
+  // Re-compose hasil saat frame custom (selectedFrameId) atau template dekoratif
+  // (branding.frame) berubah — biar preview strip ikut update (fix tombol template
+  // terlihat "tidak bisa dipilih").
   useEffect(() => {
-    if (status === 'done') finishCompose()
+    if (status !== 'done') return
+    const s = useSession.getState()
+    if (!s.shots.length) return
+    let cancelled = false
+    ;(async () => {
+      const canvas = await composeStrip(s.shots, s.branding, s.template, null, s.frames, s.selectedFrameId, s.design)
+      if (cancelled) return
+      stripCanvas.current = canvas
+      setStripUrl(canvas.toDataURL('image/png'))
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFrameId, frames])
+  }, [selectedFrameId, branding.frame, frames])
+
+  // Reset QR tiap keluar dari layar hasil (akhiri sesi / foto ulang / idle baru)
+  // biar sesi berikutnya mulai dari bersih (gak bawa QR hasil sebelumnya).
+  useEffect(() => {
+    if (status !== 'done') {
+      setQrData(null)
+      setQrOpen(false)
+    }
+  }, [status])
 
   // CETAK = gerbang pembayaran. Di mode event (jasa) skip paywall -> langsung cetak.
   // Di mode regular, buka layar BAYAR (QRIS / CASH).
@@ -322,16 +335,30 @@ export default function App() {
     }
   }, [paid, resetPay])
 
-  async function onShare() {
-    if (!stripUrl) return
-    const r = await shareImage(stripUrl)
-    setMsg(r)
+  async function onGenerateQr() {
+    if (!stripUrl && !stripCanvas.current) return
+    // Sudah pernah generate untuk hasil ini -> cuma buka lagi, JANGAN upload ulang.
+    if (qrData) { setQrOpen(true); return }
+    setMsg('Membuat QR…')
+    try {
+      // Hasil sudah fix -> upload ke server, dapat URL, generate QR dari URL.
+      const dataUrl = stripCanvas.current ? stripCanvas.current.toDataURL('image/png') : stripUrl!
+      const url = await uploadStripLocal(dataUrl)
+      const qr = await qrDataUrl(url, 320)
+      setQrData(qr)
+      setQrOpen(true)
+      setMsg('')
+    } catch {
+      setMsg('Gagal membuat QR')
+    }
   }
 
   function onReset() {
     resetShots()
     setStripUrl(null)
     setCountdown(null)
+    setQrData(null)
+    setQrOpen(false)
     setMsg('')
   }
 
@@ -379,7 +406,7 @@ export default function App() {
     <div className="bg-[#FFE600] text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
       {screen === 'attract' ? (
         /* Layar attract — kiosk idle, customer tap untuk mulai */
-        <main className="relative flex-grow flex flex-col items-center justify-center bg-[#FFE600] px-margin-mobile select-none overflow-hidden">
+        <main key="attract" className="relative flex-grow flex flex-col items-center justify-center bg-[#FFE600] px-margin-mobile select-none overflow-hidden animate-[screenIn_.35s_ease-out]">
           {/* Background image/video (per mode, dari DB) */}
           {attractMedia && (
             attractMedia.type === 'video' ? (
@@ -460,7 +487,7 @@ export default function App() {
           )}
 
           {/* Main Layout */}
-          <main className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-[#FFE600] px-margin-mobile' : 'bg-[#FFE600] px-margin-mobile'}`}>
+          <main key={status} className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]' : 'bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]'}`}>
 
             {status !== 'done' && screen === 'booth' && (
               <>
@@ -678,7 +705,10 @@ export default function App() {
             </section>
 
             <section className="w-full md:col-span-12 flex flex-col gap-md mt-lg md:max-w-2xl md:mx-auto relative z-20">
-              {/* Pilihan template/frame dekoratif — setelah foto, sebelum cetak */}
+              {/* Pilihan template/frame dekoratif — HANYA saat Template Biasa (Polos) dipilih.
+                  Kalau pakai mockup custom (desain) ATAU sudah generate QR (hasil fix), disembunyikan. */}
+              {selectedDesignId === null && !qrData && (
+              <>
               <div className="w-full bg-surface border-4 border-black p-sm brutal-shadow flex flex-col gap-xs">
                 <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider text-[12px]">Pilih Template ✨</span>
                 <div className="flex gap-xs overflow-x-auto pb-1">
@@ -715,17 +745,19 @@ export default function App() {
                   )}
                 </div>
               )}
+              </>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-md w-full">
-                <button onClick={runCapture} className="w-full py-4 px-6 bg-surface-variant border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
+                <button onClick={runCapture} disabled={!!qrData} className={`w-full py-4 px-6 bg-surface-variant border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden ${qrData ? 'opacity-40 cursor-not-allowed' : ''}`}>
                   <div className="absolute inset-0 bg-black/5 -translate-x-full group-hover:translate-x-0 transition-transform duration-300"></div>
                   <span className="material-symbols-outlined text-4xl text-on-surface-variant group-hover:-rotate-90 transition-transform duration-300">refresh</span>
                   <span className="font-headline-md text-headline-md-mobile uppercase text-on-surface">↺ ULANGI</span>
                 </button>
-                <button onClick={onShare} className="w-full py-4 px-6 bg-tertiary border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden sm:-translate-y-4">
+                <button onClick={onGenerateQr} className="w-full py-4 px-6 bg-tertiary border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
                   <div className="absolute inset-0 bg-white/20 -translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
-                  <span className="material-symbols-outlined text-4xl text-on-tertiary group-hover:scale-110 transition-transform duration-300" style={{fontVariationSettings: "'FILL' 1"}}>share</span>
-                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-tertiary">↗ SHARE</span>
+                  <span className="material-symbols-outlined text-4xl text-on-tertiary group-hover:scale-110 transition-transform duration-300" style={{fontVariationSettings: "'FILL' 1"}}>qr_code_2</span>
+                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-tertiary">⬡ QR HASIL</span>
                 </button>
                 <button onClick={onPrint} className="w-full py-4 px-6 bg-primary-container border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
                   <div className="absolute inset-0 bg-black/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
@@ -755,7 +787,51 @@ export default function App() {
           </>
         )}
       </main>
-      </>
+
+      {/* Bubble QR hasil (draggable, pojok kanan bawah default) — gak nutup layar */}
+      {qrOpen && qrData && (
+        <div
+          className={`fixed z-[60] bg-surface border-4 border-black brutal-shadow p-3 flex flex-col items-center gap-2 animate-[popIn_.25s_ease-out] max-w-[44vw] ${qrPos ? '' : 'bottom-4 right-4'}`}
+          style={qrPos ? { left: qrPos.x, top: qrPos.y, touchAction: 'none' } : { touchAction: 'none' }}
+          onPointerDown={(e) => {
+            if ((e.target as HTMLElement).closest('button')) return  // jangan drag kalau klik tombol ×
+            const el = e.currentTarget
+            const rect = el.getBoundingClientRect()
+            dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top }
+            el.setPointerCapture(e.pointerId)
+            const move = (ev: PointerEvent) => {
+              if (!dragRef.current) return
+              const w = el.offsetWidth, h = el.offsetHeight
+              const x = Math.max(4, Math.min(window.innerWidth - w - 4, ev.clientX - dragRef.current.dx))
+              const y = Math.max(4, Math.min(window.innerHeight - h - 4, ev.clientY - dragRef.current.dy))
+              setQrPos({ x, y })
+            }
+            const up = () => {
+              dragRef.current = null
+              el.removeEventListener('pointermove', move)
+              el.removeEventListener('pointerup', up)
+            }
+            el.addEventListener('pointermove', move)
+            el.addEventListener('pointerup', up)
+          }}
+        >
+          <div
+            className="flex items-center justify-between w-full gap-2 cursor-move active:cursor-grabbing select-none"
+          >
+            <span className="font-label-bold text-label-bold text-on-surface uppercase text-[11px] tracking-wider">⬡ Scan Download</span>
+            <button
+              onClick={() => setQrOpen(false)}
+              className="w-7 h-7 flex items-center justify-center bg-surface-variant border-2 border-black font-bold brutal-button-active"
+              title="Tutup"
+            >×</button>
+          </div>
+          <img src={qrData} alt="QR hasil" className="w-40 h-40 border-2 border-black sm:w-48 sm:h-48 pointer-events-none" draggable={false} />
+          <span className="font-label-bold text-label-bold text-on-surface-variant text-[10px] uppercase text-center">
+            Scan dari HP untuk simpan hasil
+          </span>
+        </div>
+      )}
+    </>
       )}
 
       {/* Layar BAYAR — gerbang CETAK. QRIS (simulasi) ATAU Cash (manual operator). */}
