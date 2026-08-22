@@ -4,7 +4,7 @@ import { useCamera } from './modules/camera/useCamera'
 import { composeStrip } from './modules/templates/TemplateEngine'
 import { printSmart } from './modules/print/printService'
 import { shareImage } from './modules/share/share'
-import { uploadStrip } from './modules/share/upload'
+import { uploadStrip, uploadStripLocal } from './modules/share/upload'
 import { buildPrintJob } from './modules/escpos/encoder'
 import { Settings } from './modules/branding/Settings'
 
@@ -219,14 +219,18 @@ export default function App() {
     const s = useSession.getState()
     if (!s.shots.length) return
     let qrUrl: string | null = s.digitalUrl
-    if (s.bridgeUrl) {
-      const first = await composeStrip(s.shots, s.branding, s.template, '', s.frames, s.selectedFrameId, s.design)
-      try {
+    // Upload hasil ke server agar QR = link download langsung.
+    // Prioritas: bridge Node (kalau diisi) -> server sendiri (default).
+    const first = await composeStrip(s.shots, s.branding, s.template, '', s.frames, s.selectedFrameId, s.design)
+    try {
+      if (s.bridgeUrl) {
         qrUrl = await uploadStrip(first.toDataURL('image/png'), s.bridgeUrl)
-        useSession.getState().setDigitalUrl(qrUrl)
-      } catch {
-        qrUrl = s.branding.qrText || null
+      } else {
+        qrUrl = await uploadStripLocal(first.toDataURL('image/png'))
       }
+      useSession.getState().setDigitalUrl(qrUrl)
+    } catch {
+      qrUrl = null
     }
     const canvas = await composeStrip(s.shots, s.branding, s.template, qrUrl, s.frames, s.selectedFrameId, s.design)
     stripCanvas.current = canvas

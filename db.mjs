@@ -277,6 +277,15 @@ export async function getPhoto(id) {
   return r.rows[0]?.data || null
 }
 
+// Daftar foto terbaru (tanpa data blob, cukup id + waktu) untuk dashboard admin.
+export async function listPhotos({ limit = 100 } = {}) {
+  const r = await pool.query(
+    'SELECT id, created_at FROM photos ORDER BY created_at DESC LIMIT $1',
+    [limit]
+  )
+  return r.rows
+}
+
 // ── Presets (konfigurasi bernama, bisa banyak) — tiap preset punya mode sendiri ──
 // Dropdown di panel memfilter preset per mode -> masing-masing config TERPISAH & persist.
 export async function savePreset(name, mode, price, branding) {

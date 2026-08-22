@@ -14,7 +14,7 @@ import multer from 'multer'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign } from './db.mjs'
+import { initDb, savePhoto, getPhoto, listPhotos, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -46,6 +46,8 @@ app.get('/u/:id', async (req, res) => {
     const data = await getPhoto(req.params.id)
     if (!data) return res.status(404).end()
     res.set('Content-Type', 'image/png')
+    // Tanpa Content-Disposition: attachment -> browser buka preview gambar
+    // di tab (user bisa lihat & download manual), bukan langsung download.
     res.set('Cache-Control', 'public, max-age=31536000, immutable')
     res.send(data)
   } catch (e) {
@@ -446,6 +448,17 @@ app.get('/portal/api/transactions', requireAccess, async (req, res) => {
     const from = typeof req.query.from === 'string' ? req.query.from : null
     const to = typeof req.query.to === 'string' ? req.query.to : null
     res.json(await listTransactions({ limit, from, to }))
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Daftar foto hasil yang masuk ke DB (terbaru dulu). Preview via /u/:id.
+app.get('/portal/api/photos', requireAccess, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 1000)
+    const rows = await listPhotos({ limit })
+    res.json(rows.map((r) => ({ id: r.id, created_at: r.created_at, url: `/u/${r.id}` })))
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }

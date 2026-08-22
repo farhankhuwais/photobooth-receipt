@@ -5,12 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Photobooth Admin</title>
 <style>
-  :root { --ink:#000; --bg:#fde047; --card:#fff; --line:#000; }
+  :root { --ink:#000; --bg:#fde047; --card:#fff; --line:#000; --side:#111; --side-hover:#222; }
   * { box-sizing:border-box; }
   body { margin:0; font-family: ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--ink); }
-  header { padding:16px 20px; border-bottom:4px solid var(--line); background:#fff; display:flex; justify-content:space-between; align-items:center; }
-  header h1 { margin:0; font-size:22px; font-weight:900; text-transform:uppercase; letter-spacing:-0.5px; }
-  .wrap { padding:20px; max-width:1000px; margin:0 auto; }
+  header { padding:14px 18px; border-bottom:4px solid var(--line); background:#fff; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { margin:0; font-size:20px; font-weight:900; text-transform:uppercase; letter-spacing:-0.5px; }
+  .layout { display:flex; min-height:calc(100vh - 64px); }
+  /* Sidebar */
+  .sidebar { width:220px; flex:0 0 220px; background:var(--side); color:#fff; padding:14px 10px; display:flex; flex-direction:column; gap:6px; }
+  .sidebar .navbtn { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:12px 14px; font-size:14px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; color:#fff; background:transparent; border:2px solid transparent; cursor:pointer; border-radius:4px; }
+  .sidebar .navbtn:hover { background:var(--side-hover); }
+  .sidebar .navbtn.active { background:#fff; color:#000; }
+  .sidebar .spacer { flex:1; }
+  .sidebar .iconbtn { background:transparent; color:#fff; border:2px solid #555; width:40px; height:40px; font-size:18px; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; border-radius:4px; }
+  .sidebar .iconbtn:hover { background:var(--side-hover); }
+  .sidebar .row { display:flex; gap:8px; padding:6px; }
+  .content { flex:1; padding:20px; overflow:auto; }
+  .wrap { padding:0; max-width:1100px; margin:0 auto; }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }
   .card { background:var(--card); border:4px solid var(--line); box-shadow:6px 6px 0 #000; padding:16px; }
   .card .label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; opacity:.6; }
@@ -79,6 +90,16 @@
   #pwPanel .cancel:hover { background:#000; color:#fff; }
   #pwPanel .err { background:#fee2e2; border:2px solid #000; padding:8px; margin-top:10px; font-weight:700; display:none; }
   #pwPanel .ok { background:#bbf7d0; border:2px solid #000; padding:8px; margin-top:10px; font-weight:700; display:none; }
+  /* Photos grid */
+  .photogrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:14px; margin-top:14px; }
+  .photocard { background:#fff; border:4px solid var(--line); box-shadow:6px 6px 0 #000; padding:8px; }
+  .photocard img { width:100%; height:auto; display:block; border:2px solid #000; cursor:pointer; }
+  .photocard .meta { font-size:11px; font-weight:800; text-transform:uppercase; margin-top:6px; opacity:.7; }
+  .photocard a { display:inline-block; margin-top:6px; font-size:11px; font-weight:800; text-transform:uppercase; color:#000; text-decoration:underline; }
+  #photoErr { background:#fee2e2; border:3px solid #000; padding:10px 12px; margin-top:14px; font-weight:700; display:none; }
+  /* Lightbox */
+  #lb { position:fixed; inset:0; background:rgba(0,0,0,.8); display:none; align-items:center; justify-content:center; z-index:60; padding:20px; }
+  #lb img { max-width:92vw; max-height:88vh; border:4px solid #fff; }
 </style>
 </head>
 <body>
@@ -102,50 +123,75 @@
   <div class="err" id="loginErr"></div>
   </div>
 
-<div class="wrap" id="dash" style="display:none">
-  <div id="err"></div>
-
-  <!-- Filter tanggal + Export CSV -->
-  <div class="filters">
-    <div class="field">
-      <label for="from">Dari</label>
-      <input id="from" type="date" />
-    </div>
-    <div class="field">
-      <label for="to">Sampai</label>
-      <input id="to" type="date" />
-    </div>
-    <button class="apply" onclick="applyFilter()">Terapkan</button>
-    <button class="apply" onclick="resetFilter()">Reset</button>
-    <div class="quickgroup">
-      <span class="qlabel">Cepat:</span>
-      <button class="quick" onclick="quickRange('today')">Hari Ini</button>
-      <button class="quick" onclick="quickRange('7d')">7 Hari</button>
-      <button class="quick" onclick="quickRange('30d')">30 Hari</button>
-      <button class="quick" onclick="quickRange('month')">Bulan Ini</button>
-    </div>
+<div class="layout" id="dash" style="display:none">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <button class="navbtn active" id="navDash" onclick="showView('dash')">📊 Dashboard</button>
+    <button class="navbtn" id="navPhotos" onclick="showView('photos')">🖼️ Foto</button>
     <div class="spacer"></div>
-    <a href="/guides/README.html" target="_blank" rel="noreferrer"
-       style="display:inline-flex; align-items:center; gap:6px; padding:10px 14px; font-weight:800; text-transform:uppercase; cursor:pointer; border:3px solid #000; background:#fff; color:#000; text-decoration:none; font-size:12px;">
-      📐 Panduan Bingkai Canva
-    </a>
-    <button class="csv" onclick="exportCsv()">⬇ Export CSV</button>
-  </div>
+    <div class="row">
+      <button class="iconbtn guide" title="Panduan Bingkai Canva" onclick="window.open('/guides/README.html','_blank')">📐</button>
+      <button class="iconbtn pw" title="Ganti Password" onclick="showPwPanel()">🔑</button>
+      <button class="iconbtn out" title="Logout" onclick="doLogout()">🚪</button>
+    </div>
+  </nav>
 
-  <div class="grid" id="kpis"></div>
-  <h2>Jam Sibuk (hari ini)</h2>
-  <div class="card" id="hours">—</div>
-  <h2>Transaksi Terakhir</h2>
-  <div class="txwrap">
-    <table>
-      <thead><tr><th>Waktu</th><th>Metode</th><th>Mode</th><th>Preset</th><th>Template</th><th>Nominal</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="6">memuat…</td></tr></tbody>
-    </table>
-  </div>
-  <div class="pager">
-    <button id="prevPage" onclick="goPage(-1)">‹ Sebelumnya</button>
-    <span class="info" id="pageInfo">—</span>
-    <button id="nextPage" onclick="goPage(1)">Berikutnya ›</button>
+  <div class="content">
+    <!-- VIEW: Dashboard -->
+    <div class="wrap" id="viewDash">
+      <div id="err"></div>
+      <div class="filters">
+        <div class="field">
+          <label for="from">Dari</label>
+          <input id="from" type="date" />
+        </div>
+        <div class="field">
+          <label for="to">Sampai</label>
+          <input id="to" type="date" />
+        </div>
+        <button class="apply" onclick="applyFilter()">Terapkan</button>
+        <button class="apply" onclick="resetFilter()">Reset</button>
+        <div class="quickgroup">
+          <span class="qlabel">Cepat:</span>
+          <button class="quick" onclick="quickRange('today')">Hari Ini</button>
+          <button class="quick" onclick="quickRange('7d')">7 Hari</button>
+          <button class="quick" onclick="quickRange('30d')">30 Hari</button>
+          <button class="quick" onclick="quickRange('month')">Bulan Ini</button>
+        </div>
+        <div class="spacer"></div>
+        <a href="/guides/README.html" target="_blank" rel="noreferrer"
+           style="display:inline-flex; align-items:center; gap:6px; padding:10px 14px; font-weight:800; text-transform:uppercase; cursor:pointer; border:3px solid #000; background:#fff; color:#000; text-decoration:none; font-size:12px;">
+          📐 Panduan Bingkai Canva
+        </a>
+        <button class="csv" onclick="exportCsv()">⬇ Export CSV</button>
+      </div>
+
+      <div class="grid" id="kpis"></div>
+      <h2>Jam Sibuk (hari ini)</h2>
+      <div class="card" id="hours">—</div>
+      <h2>Transaksi Terakhir</h2>
+      <div class="txwrap">
+        <table>
+          <thead><tr><th>Waktu</th><th>Metode</th><th>Mode</th><th>Preset</th><th>Template</th><th>Nominal</th></tr></thead>
+          <tbody id="rows"><tr><td colspan="6">memuat…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button id="prevPage" onclick="goPage(-1)">‹ Sebelumnya</button>
+        <span class="info" id="pageInfo">—</span>
+        <button id="nextPage" onclick="goPage(1)">Berikutnya ›</button>
+      </div>
+    </div>
+
+    <!-- VIEW: Foto -->
+    <div class="wrap" id="viewPhotos" style="display:none">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
+        <h2 style="margin:0">🖼️ Foto Hasil (DB)</h2>
+        <button class="refresh" onclick="loadPhotos()">↻ Refresh</button>
+      </div>
+      <div id="photoErr"></div>
+      <div class="photogrid" id="photogrid"><div style="opacity:.6; font-weight:800;">memuat…</div></div>
+    </div>
   </div>
 </div>
 
@@ -171,10 +217,26 @@
   </div>
 </div>
 
+<!-- Lightbox -->
+<div id="lb" onclick="this.style.display='none'">
+  <img id="lbImg" src="" alt="preview" />
+</div>
+
 <script>
 const PAGE_SIZE = 25
 let allTx = []
 let page = 1
+let currentView = 'dash'
+
+function showView(v) {
+  currentView = v
+  document.getElementById('viewDash').style.display = v === 'dash' ? 'block' : 'none'
+  document.getElementById('viewPhotos').style.display = v === 'photos' ? 'block' : 'none'
+  document.getElementById('navDash').classList.toggle('active', v === 'dash')
+  document.getElementById('navPhotos').classList.toggle('active', v === 'photos')
+  if (v === 'photos') loadPhotos()
+}
+
 function renderPage() {
   const total = allTx.length
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -197,17 +259,14 @@ function showLogin() {
   document.getElementById('headerActions').style.display = 'none'
   document.getElementById('dash').style.display = 'none'
   document.getElementById('login').style.display = 'block'
-  // Kosongkan field biar setelah logout tidak ada sisa email/password
-  // yang bisa dipakai langsung masuk lagi (terutama di kiosk publik).
   const e = document.getElementById('email'); if (e) e.value = ''
   const p = document.getElementById('password'); if (p) p.value = ''
   const le = document.getElementById('loginErr'); if (le) le.style.display = 'none'
 }
 function showDash() {
   document.getElementById('login').style.display = 'none'
-  document.getElementById('dash').style.display = 'block'
+  document.getElementById('dash').style.display = 'flex'
   document.getElementById('headerActions').style.display = 'flex'
-  // Default filter = hari ini (biar omset/KPI langsung nunjukkan hari ini).
   const now = new Date()
   const z = (n) => String(n).padStart(2, '0')
   const today = `${now.getFullYear()}-${z(now.getMonth() + 1)}-${z(now.getDate())}`
@@ -272,14 +331,12 @@ async function load() {
     const amount = tx.reduce((a, t) => a + Number(t.amount || 0), 0)
     const qris = tx.filter(t => t.method === 'qris').length
     const cash = tx.filter(t => t.method === 'cash').length
-    // Jam sibuk (group by jam lokal)
     const byHour = {}
     for (const t of tx) {
       const h = new Date(t.created_at).getHours()
       byHour[h] = (byHour[h] || 0) + 1
     }
     const hoursArr = Object.entries(byHour).map(([h, c]) => ({ hour: Number(h), cnt: c })).sort((a, b) => a.hour - b.hour)
-    // Card status mode booth (type + keterangan + preset aktif).
     const modeCard = `
       <div class="card" style="grid-column:1/-1; border-color:${mode === 'event' ? '#7c3aed' : '#000'}; box-shadow:6px 6px 0 ${mode === 'event' ? '#7c3aed' : '#000'};">
         <div class="label">Mode Booth Aktif</div>
@@ -296,7 +353,6 @@ async function load() {
     document.getElementById('hours').textContent = hoursArr.length
       ? hoursArr.map(h => `${String(h.hour).padStart(2,'0')}:00 → ${h.cnt} cetak`).join('   •   ')
       : (filtered ? 'tidak ada transaksi di periode ini' : 'belum ada transaksi')
-    // Simpan semua transaksi + reset ke halaman 1, lalu render per-page.
     allTx = tx
     page = 1
     renderPage()
@@ -308,6 +364,39 @@ async function load() {
       errEl.style.display = 'block'
     }
   }
+}
+
+// ── Photos view ──
+async function loadPhotos() {
+  const grid = document.getElementById('photogrid')
+  const errEl = document.getElementById('photoErr')
+  errEl.style.display = 'none'
+  grid.innerHTML = '<div style="opacity:.6; font-weight:800;">memuat…</div>'
+  try {
+    const rows = await fetch('/portal/api/photos?limit=200').then(r => {
+      if (!r.ok) throw new Error('photos ' + r.status)
+      return r.json()
+    })
+    if (!rows.length) {
+      grid.innerHTML = '<div style="opacity:.7; font-weight:800;">belum ada foto di DB</div>'
+      return
+    }
+    grid.innerHTML = rows.map(p => `
+      <div class="photocard">
+        <img src="${p.url}" alt="${p.id}" onclick="openLb('${p.url}')" loading="lazy" />
+        <div class="meta">${fmtTime(p.created_at)}</div>
+        <a href="${p.url}" target="_blank" rel="noreferrer">⬇ Buka</a>
+      </div>
+    `).join('')
+  } catch (e) {
+    if (String(e.message).includes('401')) { showLogin(); return }
+    errEl.textContent = 'Gagal muat foto: ' + e.message
+    errEl.style.display = 'block'
+  }
+}
+function openLb(url) {
+  document.getElementById('lbImg').src = url
+  document.getElementById('lb').style.display = 'flex'
 }
 
 function applyFilter() {
@@ -409,16 +498,13 @@ async function doChangePw() {
   }
 }
 
-// Boot: cek session. Kalau valid -> tampilkan dashboard (showDash memanggil load()).
-// Kalau 401 -> tampilkan form login. Tanpa ini, dashboard tetap display:none
-// saat buka/refresh /portal dengan session masih valid (hanya header yg muncul).
 async function boot() {
   const r = await fetch('/portal/api/stats', { method: 'GET', headers: { 'Accept': 'application/json' } })
   if (r.ok) showDash()
   else showLogin()
 }
 boot()
-setInterval(load, 20000)
+setInterval(() => { if (currentView === 'dash') load() }, 20000)
 </script>
 </body>
 </html>

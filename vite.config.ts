@@ -25,7 +25,9 @@ export default defineConfig({
         // malah menampilkan index.html (app booth) => tampilan blank.
         // Juga denylist /guides agar board panduan + README.html ke-serve mentah
         // (bukan di-intercept SW jadi app).
-        navigateFallbackDenylist: [/^\/portal/, /^\/guides/],
+        // Dan /u/ (link download hasil foto dari QR) — jangan di-intercept SW
+        // supaya langsung serve gambar asli, bukan app.
+        navigateFallbackDenylist: [/^\/portal/, /^\/guides/, /^\/u\//],
         cleanupOutdatedCaches: true
       }
     })
