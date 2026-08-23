@@ -188,7 +188,12 @@ export default function App() {
             if (p?.branding) branding = p.branding
           } catch { /* ignore */ }
         }
-        if (branding) st.setBranding(branding)
+        if (branding) {
+          // Server jadi source of truth utk branding preset, TAPI setting device-lokal
+          // (toggle kotak Capturing) dipertahankan biar gak ke-reset tiap refresh.
+          const localShowCapturingBox = useSession.getState().branding.showCapturingBox
+          st.setBranding({ ...branding, showCapturingBox: localShowCapturingBox })
+        }
       })
       .catch(() => {})
     return () => { active = false }

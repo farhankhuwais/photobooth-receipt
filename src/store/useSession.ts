@@ -160,7 +160,12 @@ export const useSession = create<SessionState>((set) => ({
   setTemplate: (template) => set({ template, shotCount: countFor(template), selectedFrameId: null }),
   addShot: (dataUrl) => set((s) => ({ shots: [...s.shots, dataUrl] })),
   resetShots: () => set({ shots: [], status: 'idle', digitalUrl: null }),
-  setBranding: (b) => set((s) => ({ branding: { ...s.branding, ...b } })),
+  setBranding: (b) => set((s) => {
+    const next = { ...s.branding, ...b }
+    // Persist ke localStorage biar setting bertahan setelah refresh.
+    try { localStorage.setItem('pb_branding', JSON.stringify(next)) } catch { /* ignore */ }
+    return { branding: next }
+  }),
   setFrames: (frames) => set({ frames }),
   setSelectedFrameId: (id) => set({ selectedFrameId: id }),
   setDesigns: (designs) => set({ designs }),
