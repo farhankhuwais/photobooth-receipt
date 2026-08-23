@@ -7,6 +7,7 @@ import { printSmart } from './modules/print/printService'
 import { uploadStripLocal } from './modules/share/upload'
 import { buildPrintJob } from './modules/escpos/encoder'
 import { Settings } from './modules/branding/Settings'
+import { applyComicFilter } from './modules/camera/comicFilter'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -27,6 +28,7 @@ export default function App() {
   const [step, setStep] = useState<1 | 2>(1)     // 1=pilih grid, 2=pilih desain
   const [grid, setGrid] = useState<number | null>(null) // jumlah foto terpilih (1/2/3/4)
   const [armed, setArmed] = useState(false)      // kamera sudah "siap" (tombol Mulai Jepret ditekan)
+  const [comicOn, setComicOn] = useState(false)  // filter komik aktif/tidak
   // Toggle kotak Capturing dari Settings (branding.showCapturingBox) — gak perlu state lokal.
   const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
@@ -232,7 +234,12 @@ export default function App() {
 
   function captureFrame() {
     const d = grabFrame()
-    if (d) addShot(d)
+    if (!d) return
+    if (comicOn) {
+      applyComicFilter(d).then((filtered) => addShot(filtered))
+    } else {
+      addShot(d)
+    }
   }
 
   // RETAKE SLOT: klik slot di preview → jepret ulang slot itu saja (override shots[i]).
@@ -251,9 +258,10 @@ export default function App() {
       await sleep(250)
       const d = grabFrame()
       if (d) {
+        const filtered = comicOn ? await applyComicFilter(d) : d
         const s = useSession.getState()
         const shots = s.shots.slice()
-        shots[i] = d
+        shots[i] = filtered
         useSession.setState({ shots })
       }
       setCountdown(null)
@@ -630,14 +638,25 @@ export default function App() {
               </div>
               )}
               {status === 'capturing' && !armed && (
-                <button
-                  onClick={() => { setArmed(true); runCapture() }}
-                  className="mt-4 w-full max-w-2xl py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group"
-                >
-                  <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
-                  <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
-                  <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
-                </button>
+                <div className="mt-4 w-full max-w-2xl flex gap-sm items-stretch">
+                  <button
+                    onClick={() => { setArmed(true); runCapture() }}
+                    className="flex-1 py-lg border-4 border-black bg-secondary-container text-on-secondary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group"
+                  >
+                    <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
+                    <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
+                    <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
+                  </button>
+                  {/* Toggle filter komik: posterize + outline hitam */}
+                  <button
+                    onClick={() => setComicOn(!comicOn)}
+                    className={`px-md border-4 border-black brutal-shadow neo-button flex flex-col items-center justify-center gap-1 ${comicOn ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface'}`}
+                    title="Filter komik: warna flat + outline hitam"
+                  >
+                    <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings: "'FILL' 1"}}>palette</span>
+                    <span className="text-[10px] font-bold uppercase">Komik</span>
+                  </button>
+                </div>
               )}
               {/* PREVIEW HASIL LIVE — muncul setelah "Mulai Jepret" (armed).
                   Mockup desain + slot di-compose real-time tiap shot masuk. Tanpa tombol mirror. */}
