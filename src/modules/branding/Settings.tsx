@@ -282,6 +282,7 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
       ['Logo', 'logoDataUrl', cur.logoDataUrl, old.logoDataUrl],
       ['Tampilkan tanggal', 'showDate', cur.showDate, old.showDate],
       ['Nama event di hasil', 'showEventNameOnPrint', cur.showEventNameOnPrint, old.showEventNameOnPrint],
+      ['Kotak Capturing (booth)', 'showCapturingBox', cur.showCapturingBox, old.showCapturingBox],
       ['Watermark', 'watermark', cur.watermark, old.watermark],
       ['QR', 'qrText', cur.qrText, old.qrText],
       ['Jarak atas', 'photoTopPad', cur.photoTopPad, old.photoTopPad],
