@@ -822,7 +822,7 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <div className="mt-auto z-20 pb-sm w-full pt-4">
+              <div className="mt-auto z-20 pb-sm w-full pt-4" style={branding.showCapturingBox ? undefined : { display: 'none' }}>
                 <div className="bg-surface border-4 border-black p-sm brutal-shadow mx-auto max-w-3xl">
                   <div className="flex justify-between items-center mb-sm px-xs">
                     {branding.showCapturingBox && <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider">Capturing</span>}
