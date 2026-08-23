@@ -2,7 +2,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// Inject build hash ke badge versi (biar tiap deploy badge berubah, gampang cek SW cache).
+const buildHash = (process.env.BUILD_HASH || Date.now().toString(36)).slice(-8)
+
 export default defineConfig({
+  define: {
+    __BUILD_HASH__: JSON.stringify(buildHash),
+  },
   plugins: [
     react(),
     VitePWA({

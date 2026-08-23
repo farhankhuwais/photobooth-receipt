@@ -12,9 +12,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export default function App() {
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
+  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, design, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)  // live preview hasil saat capturing (mockup + slot)
+  const [retakeIndex, setRetakeIndex] = useState<number | null>(null)  // slot yg lagi di-retake (null = tidak ada)
+  const [confirmRetake, setConfirmRetake] = useState<number | null>(null)  // slot yg mau dikonfirmasi retake (null = tidak ada)
   const [qrData, setQrData] = useState<string | null>(null)    // QR hasil (cache, persist walau overlay ditutup)
   const [qrOpen, setQrOpen] = useState(false)                  // overlay QR visible?
   const [qrPos, setQrPos] = useState<{ x: number; y: number } | null>(null)  // posisi bubble (null = default pojok)
@@ -190,9 +193,11 @@ export default function App() {
     return () => { active = false }
   }, [])
 
-  function captureFrame() {
+  // Ambil 1 frame dari video → dataURL (mirror horizontal, crop 4:3).
+  // Dipakai captureFrame() (append) DAN retakeSlot() (override index tertentu).
+  function grabFrame(): string | null {
     const video = videoRef.current
-    if (!video || !video.videoWidth || !video.videoHeight) return
+    if (!video || !video.videoWidth || !video.videoHeight) return null
     // Crop center ke aspect 4:3 (sama dengan layout template cetak: shotH = shotW*0.75)
     const tar = 4 / 3
     const vAr = video.videoWidth / video.videoHeight
@@ -211,12 +216,70 @@ export default function App() {
     c.width = Math.round(sw)
     c.height = Math.round(sh)
     const ctx = c.getContext('2d')
-    if (!ctx) return
+    if (!ctx) return null
     // Mirror horizontal biar sama dengan preview (CSS -scale-x-100)
     ctx.translate(c.width, 0)
     ctx.scale(-1, 1)
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height)
-    addShot(c.toDataURL('image/jpeg', 0.9))
+    return c.toDataURL('image/jpeg', 0.9)
+  }
+
+  function captureFrame() {
+    const d = grabFrame()
+    if (d) addShot(d)
+  }
+
+  // RETAKE SLOT: klik slot di preview → jepret ulang slot itu saja (override shots[i]).
+  // Tanpa tombol mirror. Langsung countdown, gak pakai modal.
+  async function retakeSlot(i: number) {
+    if (running.current) return
+    running.current = true
+    setRetakeIndex(i)
+    setCountdown(null)
+    try {
+      for (let c = 3; c > 0; c--) {
+        setCountdown(c)
+        await sleep(1000)
+      }
+      setCountdown(0)
+      await sleep(250)
+      const d = grabFrame()
+      if (d) {
+        const s = useSession.getState()
+        const shots = s.shots.slice()
+        shots[i] = d
+        useSession.setState({ shots })
+      }
+      setCountdown(null)
+    } catch (e) {
+      setMsg(`Retake gagal: ${(e as Error).message}`)
+    } finally {
+      running.current = false
+      setRetakeIndex(null)
+    }
+  }
+
+  // Hitung posisi % tiap slot di preview box, buat overlay klik retake.
+  function slotRects(): { left: number; top: number; width: number; height: number; rot?: number }[] {
+    const s = useSession.getState()
+    if (s.design && s.design.slots && s.design.slots.length) {
+      const cw = s.design.canvasW || 576
+      const ch = s.design.canvasH || 849
+      return s.design.slots.map((sl) => ({
+        left: (sl.x / cw) * 100,
+        top: (sl.y / ch) * 100,
+        width: (sl.w / cw) * 100,
+        height: (sl.h / ch) * 100,
+        rot: sl.rot,
+      }))
+    }
+    // Template Biasa: grid merata (full-width stacked).
+    const n = s.shotCount
+    if (n === 1) return [{ left: 0, top: 0, width: 100, height: 100 }]
+    if (n === 2) return [0, 1].map((i) => ({ left: 0, top: i * 50, width: 100, height: 50 }))
+    if (n === 4) return [0, 1, 2, 3].map((i) => ({ left: (i % 2) * 50, top: Math.floor(i / 2) * 50, width: 50, height: 50 }))
+    // strip3 (3 foto vertikal)
+    return [0, 1, 2].map((i) => ({ left: 0, top: (i * 100) / 3, width: 100, height: 100 / 3 }))
   }
 
   async function finishCompose() {
@@ -250,7 +313,8 @@ export default function App() {
         await sleep(600)
       }
       setCountdown(null)
-      useSession.getState().setStatus('done')
+      // JANGAN langsung 'done' — biarkan preview hasil tampil dulu,
+      // user klik "Lanjut ke Hasil" untuk lanjut ke layar hasil.
       await finishCompose()
     } catch (e) {
       setMsg(`Capture gagal: ${(e as Error).message}`)
@@ -276,6 +340,22 @@ export default function App() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFrameId, branding.frame, frames])
+
+  // PREVIEW HASIL LIVE: saat capturing && armed, tiap shot masuk langsung di-compose
+  // (mockup desain + slot) biar user lihat progres sebelum layar hasil. Tanpa fitur mirror.
+  useEffect(() => {
+    if (status !== 'capturing' || !armed) { setPreviewUrl(null); return }
+    const s = useSession.getState()
+    if (!s.shots.length) { setPreviewUrl(null); return }
+    let cancelled = false
+    ;(async () => {
+      const canvas = await composeStrip(s.shots, s.branding, s.template, null, s.frames, s.selectedFrameId, s.design)
+      if (cancelled) return
+      setPreviewUrl(canvas.toDataURL('image/png'))
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, armed, shots, selectedFrameId, branding.frame, frames])
 
   // Reset QR tiap keluar dari layar hasil (akhiri sesi / foto ulang / idle baru)
   // biar sesi berikutnya mulai dari bersih (gak bawa QR hasil sebelumnya).
@@ -487,15 +567,21 @@ export default function App() {
           )}
 
           {/* Main Layout */}
-          <main key={status} className={`flex-grow pt-[80px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]' : 'bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]'}`}>
+          <main key={status} className={`flex-grow pt-[64px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]' : 'bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]'}`}>
 
             {status !== 'done' && screen === 'booth' && (
               <>
-            <div className={`w-full max-w-3xl mx-auto flex flex-col items-center justify-center mt-2 ${status === 'capturing' ? 'flex-grow' : 'flex-none'}`}>
+            <div
+              className={`w-full max-w-[1600px] mx-auto mt-2 ${status === 'capturing' && armed ? '' : (status === 'capturing' ? 'flex flex-col items-center justify-center' : 'flex flex-col items-center justify-center')} ${status === 'capturing' ? 'flex-grow' : 'flex-none'}`}
+              style={status === 'capturing' && armed ? { display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' } : undefined}
+            >
               {/* Kamera HANYA tampil saat capturing (setelah user pilih mockup & next).
                   Di tahap pilih (idle) kamera disembunyikan. */}
               {status === 'capturing' && (
-              <div className="relative w-full max-w-2xl aspect-[4/3] border-4 border-black brutal-shadow bg-surface-container overflow-hidden">
+              <div
+                className={`relative w-full ${status === 'capturing' && armed ? '' : 'max-w-2xl'} aspect-[4/3] border-4 border-black brutal-shadow bg-surface-container overflow-hidden`}
+                style={status === 'capturing' && armed ? { width: '100%', maxWidth: '1100px', flexShrink: 0 } : undefined}
+              >
                 <video
                   ref={videoRef}
                   autoPlay
@@ -546,6 +632,78 @@ export default function App() {
                   <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
                   <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
                 </button>
+              )}
+              {/* PREVIEW HASIL LIVE — muncul setelah "Mulai Jepret" (armed).
+                  Mockup desain + slot di-compose real-time tiap shot masuk. Tanpa tombol mirror. */}
+              {status === 'capturing' && armed && (
+                <div className="mt-2 flex flex-col items-center" style={{ width: '100%', maxWidth: '420px' }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-label-bold text-label-bold text-black uppercase text-[12px] tracking-wider">
+                      Preview Hasil
+                    </span>
+                    <span className="font-label-bold text-label-bold text-black bg-primary-container border-2 border-black px-2 text-[12px]">
+                      {shots.length} / {shotCount}
+                    </span>
+                  </div>
+                  {/* Box preview: aspect mengikuti design (mockup) atau 576/849 (template biasa).
+                      Tinggi dibatasi (max-h) biar muat 1 layar di tablet portrait tanpa scroll.
+                      Overlay slot transparan di atas img → klik = retake slot itu. Tanpa mirror. */}
+                  <div
+                    className="relative w-full border-4 border-black brutal-shadow bg-white overflow-hidden"
+                    style={{ maxHeight: '360px', aspectRatio: design && design.canvasW ? `${design.canvasW} / ${design.canvasH}` : '576 / 849' }}
+                  >
+                    {previewUrl ? (
+                      <img src={previewUrl} alt="preview hasil" className="absolute inset-0 w-full h-full object-contain z-0 animate-[popIn_.25s_ease-out]" />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant z-0">
+                        <span className="material-symbols-outlined text-[64px] opacity-30">photo_camera</span>
+                      </div>
+                    )}
+
+                    {/* Overlay slot — tiap slot jadi div klik (retake). Sembunyi saat sedang retake. */}
+                    {retakeIndex === null && shots.length > 0 && (
+                      <div className="absolute inset-0 z-20">
+                        {slotRects().map((r, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setConfirmRetake(i)}
+                            className="absolute overflow-hidden border-2 border-dashed border-transparent hover:border-black hover:bg-black/10 transition-colors group"
+                            style={{ left: `${r.left}%`, top: `${r.top}%`, width: `${r.width}%`, height: `${r.height}%`, transform: r.rot ? `rotate(${r.rot}deg)` : undefined }}
+                            title={`Ulangi foto ke-${i + 1}`}
+                          >
+                            <span className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                              <span className="flex items-center gap-1 text-white font-black text-[14px] bg-black/60 border-2 border-white px-2 py-1">
+                                <span className="material-symbols-outlined text-[18px]">refresh</span> Ulangi
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Countdown retake — menimpa preview saat sedang jepret ulang slot. */}
+                    {retakeIndex !== null && countdown !== null && (
+                      <div className="absolute inset-0 z-30 flex flex-col items-center justify-center pointer-events-none bg-white/70">
+                        <span className="font-label-bold text-label-bold text-black uppercase text-[14px] mb-1">Ulangi foto ke-{retakeIndex + 1}</span>
+                        <span className={`font-display text-display font-black text-primary-container select-none text-[150px] leading-none ${countdown > 0 ? 'pulse-text' : ''}`} style={{ textShadow: '6px 6px 0px #000, 0 0 20px #ffff00' }}>
+                          {countdown === 0 ? '📸' : countdown}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {/* Tombol Lanjut ke Hasil — muncul setelah semua foto jepret selesai.
+                      Preview bisa dilihat dulu; user yg putuskan kapan lanjut. Tanpa mirror. */}
+                  {shots.length === shotCount && shots.length > 0 && retakeIndex === null && (
+                    <button
+                      onClick={() => { useSession.getState().setStatus('done') }}
+                      className="mt-4 w-full py-lg border-4 border-black bg-primary-container text-on-primary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group"
+                    >
+                      <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
+                      <span className="material-symbols-outlined text-[28px] md:text-[36px] relative z-10">arrow_forward</span>
+                      <span className="font-headline-md-mobile md:text-headline-md font-black uppercase tracking-wider relative z-10">Lanjut ke Hasil</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -884,6 +1042,40 @@ export default function App() {
       )}
 
       {showSettings && <Settings onClose={() => setShowSettings(false)} onAttractChange={reloadAttract} />}
+
+      {/* Badge versi bundle — buat verifikasi live tanpa devtools (cek SW cache). */}
+      <div className="fixed bottom-1 right-1 z-[60] bg-black/70 text-white text-[10px] px-2 py-0.5 rounded font-mono select-none pointer-events-none">
+        v={import.meta.env.VITE_BUILD_HASH || 'dev'}
+      </div>
+
+      {/* Modal konfirmasi retake slot — klik slot → confirm dulu, baru jepret ulang. */}
+      {confirmRetake !== null && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-surface border-4 border-black brutal-shadow-sm w-full max-w-md p-5 flex flex-col items-center gap-4 animate-[popIn_.2s_ease-out]">
+            <span className="material-symbols-outlined text-[48px] text-on-surface">help</span>
+            <p className="font-headline-md text-headline-md-mobile md:text-headline-md font-black text-on-surface text-center uppercase">
+              Ulangi foto ke-{confirmRetake + 1}?
+            </p>
+            <p className="font-label-bold text-label-bold text-on-surface-variant text-center text-[13px]">
+              Foto di slot ini akan diambil ulang. Foto lain tetap tersimpan.
+            </p>
+            <div className="flex gap-3 w-full mt-1">
+              <button
+                onClick={() => setConfirmRetake(null)}
+                className="flex-1 py-3 border-2 border-black bg-surface-variant font-label-bold text-label-bold uppercase brutal-shadow-sm hover:bg-surface"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => { const i = confirmRetake; setConfirmRetake(null); retakeSlot(i) }}
+                className="flex-1 py-3 border-4 border-black bg-primary-container text-on-primary-container font-label-bold text-label-bold uppercase brutal-shadow hover:bg-primary"
+              >
+                Ya, Ulangi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
