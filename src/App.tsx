@@ -7,7 +7,8 @@ import { printSmart } from './modules/print/printService'
 import { uploadStripLocal } from './modules/share/upload'
 import { buildPrintJob } from './modules/escpos/encoder'
 import { Settings } from './modules/branding/Settings'
-import { applyComicFilter } from './modules/camera/comicFilter'
+import { applyFilter, FILTER_LABELS } from './modules/camera/comicFilter'
+import type { PhotoFilter } from './modules/camera/comicFilter'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -28,7 +29,7 @@ export default function App() {
   const [step, setStep] = useState<1 | 2>(1)     // 1=pilih grid, 2=pilih desain
   const [grid, setGrid] = useState<number | null>(null) // jumlah foto terpilih (1/2/3/4)
   const [armed, setArmed] = useState(false)      // kamera sudah "siap" (tombol Mulai Jepret ditekan)
-  const [comicOn, setComicOn] = useState(false)  // filter komik aktif/tidak
+  const [filter, setFilter] = useState<PhotoFilter>('none')  // filter foto aktif
   // Toggle kotak Capturing dari Settings (branding.showCapturingBox) — gak perlu state lokal.
   const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
@@ -235,8 +236,8 @@ export default function App() {
   function captureFrame() {
     const d = grabFrame()
     if (!d) return
-    if (comicOn) {
-      applyComicFilter(d).then((filtered) => addShot(filtered))
+    if (filter !== 'none') {
+      applyFilter(d, filter).then((filtered) => addShot(filtered))
     } else {
       addShot(d)
     }
@@ -258,7 +259,7 @@ export default function App() {
       await sleep(250)
       const d = grabFrame()
       if (d) {
-        const filtered = comicOn ? await applyComicFilter(d) : d
+        const filtered = filter !== 'none' ? await applyFilter(d, filter) : d
         const s = useSession.getState()
         const shots = s.shots.slice()
         shots[i] = filtered
@@ -647,15 +648,19 @@ export default function App() {
                     <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
                     <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
                   </button>
-                  {/* Toggle filter komik: posterize + outline hitam */}
-                  <button
-                    onClick={() => setComicOn(!comicOn)}
-                    className={`px-md border-4 border-black brutal-shadow neo-button flex flex-col items-center justify-center gap-1 ${comicOn ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface'}`}
-                    title="Filter komik: warna flat + outline hitam"
-                  >
-                    <span className="material-symbols-outlined text-[28px]" style={{fontVariationSettings: "'FILL' 1"}}>palette</span>
-                    <span className="text-[10px] font-bold uppercase">Komik</span>
-                  </button>
+                  {/* Chip pilih filter: Tanpa / Komik / Vintage / Sepia / Mono */}
+                  <div className="flex flex-col items-stretch gap-1">
+                    {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setFilter(f)}
+                        className={`px-2 py-1 border-2 border-black brutal-shadow-sm text-[10px] font-bold uppercase tracking-wide ${filter === f ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface'}`}
+                        title={`Filter ${FILTER_LABELS[f]}`}
+                      >
+                        {FILTER_LABELS[f]}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
               {/* PREVIEW HASIL LIVE — muncul setelah "Mulai Jepret" (armed).

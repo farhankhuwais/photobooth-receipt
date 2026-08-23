@@ -1,19 +1,149 @@
-// Filter kartun anime (cel-shading):
-// 1) Smoothing edge-preserving-ish (box blur 2x) -> kulit/warna jadi halus & flat
-// 2) Cel shading: luminance diquantize jadi 3 band (shadow / mid / highlight)
-// 3) Saturation boost dikit biar warna cerah khas anime
-// 4) Outline tipis: Sobel threshold tinggi -> cuma kontur kuat, ink gelap keunguan
-// Input dataURL, output dataURL JPEG.
+// Kumpulan filter foto untuk photobooth.
+// Semua filter input dataURL -> output dataURL JPEG.
+//
+// - 'comic'   : anime cel-shading (blur halus + 3 band shading + outline tipis)
+// - 'vintage' : sepia hangat + vignette ringan (nuansa foto lama)
+// - 'sepia'   : sepia klasik polos tanpa vignette
+// - 'mono'    : hitam-putih kontras (film B&W)
 
-const INK_R = 38, INK_G = 32, INK_B = 48   // warna garis outline (gelap keunguan, bukan hitam pekat)
-const EDGE_THRESHOLD = 62                   // makin tinggi = makin sedikit garis (tipis & rapi)
+export type PhotoFilter = 'none' | 'comic' | 'vintage' | 'sepia' | 'mono'
+
+export const FILTER_LABELS: Record<PhotoFilter, string> = {
+  none: 'Tanpa',
+  comic: 'Komik',
+  vintage: 'Vintage',
+  sepia: 'Sepia',
+  mono: 'Mono',
+}
+
+export function applyFilter(dataUrl: string, f: PhotoFilter): Promise<string> {
+  if (f === 'none') return Promise.resolve(dataUrl)
+  if (f === 'comic') return applyComic(dataUrl)
+  return applySimple(dataUrl, f)
+}
+
+// ---------- comic (anime cel-shading) ----------
+
+const INK_R = 38, INK_G = 32, INK_B = 48   // warna garis outline (gelap keunguan)
+const EDGE_THRESHOLD = 62                   // makin tinggi = garis makin sedikit/tipis
 const T_SHADOW = 0.42                       // batas bawah mid-tone (0..1 luminance)
 const T_HIGH = 0.74                         // batas atas mid-tone
 const F_SHADOW = 0.78                       // pengali gelap utk area shadow
 const F_HIGH = 1.14                         // pengali terang utk area highlight
 const SAT = 1.28                            // saturasi boost
 
-export function applyComicFilter(dataUrl: string): Promise<string> {
+function applyComic(dataUrl: string): Promise<string> {
+  return load(dataUrl).then((c) => {
+    const ctx = c.getContext('2d', { willReadFrequently: true })!
+    const imageData = ctx.getImageData(0, 0, c.width, c.height)
+    const d = imageData.data
+
+    // -- 1) Smoothing: dua pass box blur separable radius 2 --
+    let buf = boxBlur(d, c.width, c.height, 2)
+    buf = boxBlur(buf, c.width, c.height, 2)
+
+    // -- 2+3) Cel shading + saturasi --
+    const n = c.width * c.height
+    const gray = new Float32Array(n)
+    for (let i = 0, p = 0; i < n; i++, p += 4) {
+      const r = buf[p], g = buf[p + 1], b = buf[p + 2]
+      const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+      gray[i] = lum * 255
+
+      let f = 1
+      if (lum < T_SHADOW) f = F_SHADOW
+      else if (lum >= T_HIGH) f = F_HIGH
+
+      const avg = (r + g + b) / 3
+      let nr = avg + (r - avg) * SAT
+      let ng = avg + (g - avg) * SAT
+      let nb = avg + (b - avg) * SAT
+
+      buf[p] = Math.min(255, nr * f)
+      buf[p + 1] = Math.min(255, ng * f)
+      buf[p + 2] = Math.min(255, nb * f)
+    }
+
+    // -- 4) Outline: Sobel threshold tinggi --
+    const w = c.width, h = c.height
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x
+        const tl = gray[i - w - 1], t = gray[i - w], tr = gray[i - w + 1]
+        const l = gray[i - 1], r = gray[i + 1]
+        const bl = gray[i + w - 1], b = gray[i + w], br = gray[i + w + 1]
+        const gx = (tr + 2 * r + br) - (tl + 2 * l + bl)
+        const gy = (bl + 2 * b + br) - (tl + 2 * t + tr)
+        if (Math.abs(gx) + Math.abs(gy) > EDGE_THRESHOLD) {
+          const p = i * 4
+          buf[p] = INK_R; buf[p + 1] = INK_G; buf[p + 2] = INK_B
+        }
+      }
+    }
+
+    imageData.data.set(buf)
+    ctx.putImageData(imageData, 0, 0)
+    return c.toDataURL('image/jpeg', 0.92)
+  })
+}
+
+// ---------- simple filters (vintage / sepia / mono) ----------
+
+function applySimple(dataUrl: string, f: Exclude<PhotoFilter, 'none' | 'comic'>): Promise<string> {
+  return load(dataUrl).then((c) => {
+    const ctx = c.getContext('2d', { willReadFrequently: true })!
+    ctx.drawImage(ctx.canvas, 0, 0)
+    const imageData = ctx.getImageData(0, 0, c.width, c.height)
+    const d = imageData.data
+
+    for (let p = 0; p < d.length; p += 4) {
+      const r = d[p], g = d[p + 1], b = d[p + 2]
+      if (f === 'mono') {
+        // B&W film: luminance + kontras S-curve ringan
+        let l = 0.299 * r + 0.587 * g + 0.114 * b
+        l = clamp255((l - 128) * 1.18 + 128 + 6)
+        d[p] = d[p + 1] = d[p + 2] = l
+      } else {
+        // sepia dasar (matrix klasik)
+        let sr = 0.393 * r + 0.769 * g + 0.189 * b
+        let sg = 0.349 * r + 0.686 * g + 0.168 * b
+        let sb = 0.272 * r + 0.534 * g + 0.131 * b
+        if (f === 'vintage') {
+          // hangat dikit + fade highlight + vignette nanti di akhir
+          sr = sr * 1.06 + 10
+          sg = sg * 1.0 + 4
+          sb = sb * 0.92
+        }
+        d[p] = clamp255(sr); d[p + 1] = clamp255(sg); d[p + 2] = clamp255(sb)
+      }
+    }
+
+    if (f === 'vintage') {
+      // vignette radial ringan
+      const w = c.width, h = c.height
+      const cx = w / 2, cy = h / 2
+      const maxR = Math.sqrt(cx * cx + cy * cy)
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const dx = x - cx, dy = y - cy
+          const dist = Math.sqrt(dx * dx + dy * dy) / maxR
+          const vig = 1 - 0.28 * Math.max(0, dist - 0.55) / 0.45
+          if (vig < 1) {
+            const p = (y * w + x) * 4
+            d[p] *= vig; d[p + 1] *= vig; d[p + 2] *= vig
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0)
+    return c.toDataURL('image/jpeg', 0.92)
+  })
+}
+
+// ---------- helpers ----------
+
+function load(dataUrl: string): Promise<HTMLCanvasElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
@@ -21,74 +151,23 @@ export function applyComicFilter(dataUrl: string): Promise<string> {
         const c = document.createElement('canvas')
         c.width = img.naturalWidth
         c.height = img.naturalHeight
-        const ctx = c.getContext('2d', { willReadFrequently: true })!
-        ctx.drawImage(img, 0, 0)
-
-        const imageData = ctx.getImageData(0, 0, c.width, c.height)
-        const d = imageData.data
-
-        // -- 1) Smoothing: dua pass box blur separable radius 2 --
-        let buf = boxBlur(d, c.width, c.height, 2)
-        buf = boxBlur(buf, c.width, c.height, 2)
-
-        // -- 2+3) Cel shading + saturasi (per pixel, in place) --
-        const n = c.width * c.height
-        const gray = new Float32Array(n)
-        for (let i = 0, p = 0; i < n; i++, p += 4) {
-          const r = buf[p], g = buf[p + 1], b = buf[p + 2]
-          const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-          gray[i] = lum * 255
-
-          let f = 1
-          if (lum < T_SHADOW) f = F_SHADOW
-          else if (lum >= T_HIGH) f = F_HIGH
-
-          const avg = (r + g + b) / 3
-          let nr = avg + (r - avg) * SAT
-          let ng = avg + (g - avg) * SAT
-          let nb = avg + (b - avg) * SAT
-
-          nr = Math.min(255, nr * f)
-          ng = Math.min(255, ng * f)
-          nb = Math.min(255, nb * f)
-
-          buf[p] = nr; buf[p + 1] = ng; buf[p + 2] = nb
-        }
-
-        // -- 4) Outline: Sobel di grayscale, threshold tinggi --
-        const w = c.width, h = c.height
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const i = y * w + x
-            const tl = gray[i - w - 1], t = gray[i - w], tr = gray[i - w + 1]
-            const l = gray[i - 1], r = gray[i + 1]
-            const bl = gray[i + w - 1], b = gray[i + w], br = gray[i + w + 1]
-            const gx = (tr + 2 * r + br) - (tl + 2 * l + bl)
-            const gy = (bl + 2 * b + br) - (tl + 2 * t + tr)
-            if (Math.abs(gx) + Math.abs(gy) > EDGE_THRESHOLD) {
-              const p = i * 4
-              buf[p] = INK_R; buf[p + 1] = INK_G; buf[p + 2] = INK_B
-            }
-          }
-        }
-
-        imageData.data.set(buf)
-        ctx.putImageData(imageData, 0, 0)
-        resolve(c.toDataURL('image/jpeg', 0.92))
+        c.getContext('2d', { willReadFrequently: true })!.drawImage(img, 0, 0)
+        resolve(c)
       } catch (e) { reject(e) }
     }
-    img.onerror = () => reject(new Error('comic filter: image load failed'))
+    img.onerror = () => reject(new Error('filter: image load failed'))
     img.src = dataUrl
   })
 }
 
-// Box blur separable dengan sliding window (in-place pada copy baru).
+function clamp255(v: number): number { return v < 0 ? 0 : v > 255 ? 255 : v }
+
+// Box blur separable dengan sliding window.
 function boxBlur(src: Uint8ClampedArray, w: number, h: number, r: number): Uint8ClampedArray {
   const tmp = new Uint8ClampedArray(src.length)
   const out = new Uint8ClampedArray(src.length)
   const win = r * 2 + 1
 
-  // horizontal
   for (let y = 0; y < h; y++) {
     const row = y * w * 4
     for (let ch = 0; ch < 3; ch++) {
@@ -99,11 +178,9 @@ function boxBlur(src: Uint8ClampedArray, w: number, h: number, r: number): Uint8
         sum += src[row + clampX(x + r + 1, w) * 4 + ch] - src[row + clampX(x - r, w) * 4 + ch]
       }
     }
-    // alpha salin langsung
     for (let x = 0; x < w; x++) tmp[row + x * 4 + 3] = src[row + x * 4 + 3]
   }
 
-  // vertical
   for (let x = 0; x < w; x++) {
     const col = x * 4
     for (let ch = 0; ch < 3; ch++) {
