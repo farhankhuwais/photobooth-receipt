@@ -35,6 +35,8 @@ export default function App() {
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
   const running = useRef(false)
+  // Raw shots (tanpa filter): sumber truth buat re-filter saat ganti filter setelah preview.
+  const rawShotsRef = useRef<string[]>([])
 
   // Load background attract untuk mode saat ini (regular/event) dari DB.
   function loadAttract(m: 'regular' | 'event') {
@@ -233,9 +235,26 @@ export default function App() {
     return c.toDataURL('image/jpeg', 0.9)
   }
 
+  // Ganti filter: simpan pilihan + re-apply ke semua slot dari raw (kalau sudah ada jepretan).
+  function changeFilter(f: PhotoFilter) {
+    setFilter(f)
+    const raw = rawShotsRef.current
+    if (raw.length === 0) return
+    Promise.all(raw.map((d) => (f !== 'none' ? applyFilter(d, f) : Promise.resolve(d))))
+      .then((filtered) => {
+        useSession.setState({ shots: filtered })
+      })
+  }
+
+  // Sinkron rawShots tiap addShot dari luar (captureFrame pakai path sendiri).
+  useEffect(() => {
+    if (shots.length === 0) rawShotsRef.current = []
+  }, [shots.length])
+
   function captureFrame() {
     const d = grabFrame()
     if (!d) return
+    rawShotsRef.current.push(d)
     if (filter !== 'none') {
       applyFilter(d, filter).then((filtered) => addShot(filtered))
     } else {
@@ -259,6 +278,8 @@ export default function App() {
       await sleep(250)
       const d = grabFrame()
       if (d) {
+        if (rawShotsRef.current.length > i) rawShotsRef.current[i] = d
+        else rawShotsRef.current.push(d)
         const filtered = filter !== 'none' ? await applyFilter(d, filter) : d
         const s = useSession.getState()
         const shots = s.shots.slice()
@@ -648,19 +669,17 @@ export default function App() {
                     <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
                     <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
                   </button>
-                  {/* Chip pilih filter: Tanpa / Komik / Vintage / Sepia / Mono */}
-                  <div className="flex flex-col items-stretch gap-1">
+                  {/* Dropdown pilih filter: Tanpa / Komik / Vintage / Sepia / Mono / Sketsa */}
+                  <select
+                    value={filter}
+                    onChange={(e) => changeFilter(e.target.value as PhotoFilter)}
+                    className="px-2 py-2 border-4 border-black brutal-shadow-sm bg-surface text-on-surface text-[12px] font-bold uppercase tracking-wide"
+                    title="Pilih filter"
+                  >
                     {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
-                      <button
-                        key={f}
-                        onClick={() => setFilter(f)}
-                        className={`px-2 py-1 border-2 border-black brutal-shadow-sm text-[10px] font-bold uppercase tracking-wide ${filter === f ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface'}`}
-                        title={`Filter ${FILTER_LABELS[f]}`}
-                      >
-                        {FILTER_LABELS[f]}
-                      </button>
+                      <option key={f} value={f}>{FILTER_LABELS[f]}</option>
                     ))}
-                  </div>
+                  </select>
                 </div>
               )}
               {/* PREVIEW HASIL LIVE — muncul setelah "Mulai Jepret" (armed).
@@ -721,6 +740,17 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                  {/* Dropdown filter di preview — ganti filter = semua slot ke-update dari raw */}
+                  <select
+                    value={filter}
+                    onChange={(e) => changeFilter(e.target.value as PhotoFilter)}
+                    className="mt-2 w-full px-2 py-2 border-4 border-black brutal-shadow-sm bg-surface text-on-surface text-[12px] font-bold uppercase tracking-wide"
+                    title="Ganti filter (semua foto ikut berubah)"
+                  >
+                    {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
+                      <option key={f} value={f}>{FILTER_LABELS[f]}</option>
+                    ))}
+                  </select>
                   {/* Tombol Lanjut ke Hasil — muncul setelah semua foto jepret selesai.
                       Preview bisa dilihat dulu; user yg putuskan kapan lanjut. Tanpa mirror. */}
                   {shots.length === shotCount && shots.length > 0 && retakeIndex === null && (
