@@ -24,6 +24,8 @@ export interface BrandingConfig {
   frame: FrameId
   // Tampilkan nama event di HASIL CETAK (header + frame vintage). Attract tetap pakai eventName.
   showEventNameOnPrint: boolean
+  // Toggle tampil/sembunyi kotak "Capturing" di bawah tombol Mulai Jepret (booth screen).
+  showCapturingBox: boolean
   // Jarak dekorasi foto (px): atas (vs header/logo), bawah (vs footer QR), antar foto.
   photoTopPad: number
   photoBottomPad: number
@@ -104,6 +106,7 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   qrText: '',
   frame: 'none',
   showEventNameOnPrint: true,
+  showCapturingBox: true,
   // Jarak dekorasi foto default (px): atas 24, bawah 24, antar foto 20.
   photoTopPad: 24,
   photoBottomPad: 24,

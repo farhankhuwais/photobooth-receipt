@@ -432,6 +432,10 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
                     <input type="checkbox" checked={branding.showEventNameOnPrint} onChange={(e) => setBranding({ showEventNameOnPrint: e.target.checked })} className="w-5 h-5 border-4 border-black accent-primary-container" />
                     Nama event di hasil
                   </label>
+                  <label className="flex items-center gap-2 font-label-bold text-label-bold text-on-surface text-[12px]">
+                    <input type="checkbox" checked={branding.showCapturingBox} onChange={(e) => setBranding({ showCapturingBox: e.target.checked })} className="w-5 h-5 border-4 border-black accent-primary-container" />
+                    Kotak Capturing (booth)
+                  </label>
                 </Panel>
                 <Field label="Watermark / Footer" hint="cth: thank you!">
                   <input value={branding.watermark} onChange={(e) => setBranding({ watermark: e.target.value })} placeholder="cth: thank you!" className={inputCls} />
