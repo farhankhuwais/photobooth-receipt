@@ -685,8 +685,10 @@ export default function App() {
               {/* PREVIEW HASIL LIVE — muncul setelah "Mulai Jepret" (armed).
                   Mockup desain + slot di-compose real-time tiap shot masuk. Tanpa tombol mirror. */}
               {status === 'capturing' && armed && (
-                <div className="mt-2 flex flex-col items-center" style={{ width: '100%', maxWidth: '420px' }}>
-                  <div className="flex items-center justify-between mb-1">
+                <div className="mt-2 flex flex-row gap-4 w-full" style={{ maxWidth: '820px' }}>
+                  {/* KOLOM KIRI: preview hasil (mockup + slot) */}
+                  <div className="flex-1 flex flex-col items-center min-w-0">
+                  <div className="flex items-center justify-between mb-1 w-full">
                     <span className="font-label-bold text-label-bold text-black uppercase text-[12px] tracking-wider">
                       Preview Hasil
                     </span>
@@ -740,29 +742,30 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                  {/* Dropdown filter di preview — ganti filter = semua slot ke-update dari raw */}
-                  <select
-                    value={filter}
-                    onChange={(e) => changeFilter(e.target.value as PhotoFilter)}
-                    className="mt-2 w-full px-2 py-2 border-4 border-black brutal-shadow-sm bg-surface text-on-surface text-[12px] font-bold uppercase tracking-wide"
-                    title="Ganti filter (semua foto ikut berubah)"
-                  >
-                    {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
-                      <option key={f} value={f}>{FILTER_LABELS[f]}</option>
-                    ))}
-                  </select>
-                  {/* Tombol Lanjut ke Hasil — muncul setelah semua foto jepret selesai.
-                      Preview bisa dilihat dulu; user yg putuskan kapan lanjut. Tanpa mirror. */}
-                  {shots.length === shotCount && shots.length > 0 && retakeIndex === null && (
-                    <button
-                      onClick={() => { useSession.getState().setStatus('done') }}
-                      className="mt-4 w-full py-lg border-4 border-black bg-primary-container text-on-primary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group"
+                  </div>
+                  {/* KOLOM KANAN: pilih efek + Lanjut ke Hasil (stack vertikal) */}
+                  <div className="w-[240px] flex flex-col gap-2 justify-center shrink-0">
+                    <select
+                      value={filter}
+                      onChange={(e) => changeFilter(e.target.value as PhotoFilter)}
+                      className="w-full px-2 py-2 border-4 border-black brutal-shadow-sm bg-surface text-on-surface text-[12px] font-bold uppercase tracking-wide"
+                      title="Ganti filter (semua foto ikut berubah)"
                     >
-                      <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
-                      <span className="material-symbols-outlined text-[28px] md:text-[36px] relative z-10">arrow_forward</span>
-                      <span className="font-headline-md-mobile md:text-headline-md font-black uppercase tracking-wider relative z-10">Lanjut ke Hasil</span>
-                    </button>
-                  )}
+                      {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
+                        <option key={f} value={f}>{FILTER_LABELS[f]}</option>
+                      ))}
+                    </select>
+                    {shots.length === shotCount && shots.length > 0 && retakeIndex === null && (
+                      <button
+                        onClick={() => { useSession.getState().setStatus('done') }}
+                        className="w-full py-lg border-4 border-black bg-primary-container text-on-primary-container brutal-shadow neo-button flex items-center justify-center gap-sm relative overflow-hidden group"
+                      >
+                        <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
+                        <span className="material-symbols-outlined text-[28px] md:text-[36px] relative z-10">arrow_forward</span>
+                        <span className="font-headline-md-mobile md:text-headline-md font-black uppercase tracking-wider relative z-10">Lanjut ke Hasil</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
