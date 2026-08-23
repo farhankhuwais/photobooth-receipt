@@ -27,6 +27,7 @@ export default function App() {
   const [step, setStep] = useState<1 | 2>(1)     // 1=pilih grid, 2=pilih desain
   const [grid, setGrid] = useState<number | null>(null) // jumlah foto terpilih (1/2/3/4)
   const [armed, setArmed] = useState(false)      // kamera sudah "siap" (tombol Mulai Jepret ditekan)
+  const capturingVisible = useRef(true) // toggle tampil/sembunyi kotak Capturing (true=tampil)
   const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
@@ -824,7 +825,7 @@ export default function App() {
               <div className="mt-auto z-20 pb-sm w-full pt-4">
                 <div className="bg-surface border-4 border-black p-sm brutal-shadow mx-auto max-w-3xl">
                   <div className="flex justify-between items-center mb-sm px-xs">
-                    <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider">Capturing</span>
+                    <span className="font-label-bold text-label-bold text-on-surface uppercase tracking-wider">{capturingVisible.current && "Capturing"}</span>
                     <span className="font-label-bold text-label-bold text-on-surface bg-primary-container px-2 border-2 border-black">{shots.length} / {shotCount}</span>
                   </div>
                   
