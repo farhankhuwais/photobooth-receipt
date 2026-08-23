@@ -6,7 +6,7 @@
 // - 'sepia'   : sepia klasik polos tanpa vignette
 // - 'mono'    : hitam-putih kontras (film B&W)
 
-export type PhotoFilter = 'none' | 'comic' | 'vintage' | 'sepia' | 'mono'
+export type PhotoFilter = 'none' | 'comic' | 'vintage' | 'sepia' | 'mono' | 'lineart'
 
 export const FILTER_LABELS: Record<PhotoFilter, string> = {
   none: 'Tanpa',
@@ -14,11 +14,13 @@ export const FILTER_LABELS: Record<PhotoFilter, string> = {
   vintage: 'Vintage',
   sepia: 'Sepia',
   mono: 'Mono',
+  lineart: 'Sketsa',
 }
 
 export function applyFilter(dataUrl: string, f: PhotoFilter): Promise<string> {
   if (f === 'none') return Promise.resolve(dataUrl)
   if (f === 'comic') return applyComic(dataUrl)
+  if (f === 'lineart') return applyLineArt(dataUrl)
   return applySimple(dataUrl, f)
 }
 
@@ -199,3 +201,96 @@ function boxBlur(src: Uint8ClampedArray, w: number, h: number, r: number): Uint8
 
 function clampX(x: number, w: number): number { return x < 0 ? 0 : x >= w ? w - 1 : x }
 function clampY(y: number, h: number): number { return y < 0 ? 0 : y >= h ? h - 1 : y }
+
+// ---------- lineart (B&W minimalist cartoon line art) ----------
+// Flat white fill + clean bold ink outlines. No shading, no gradients, no texture.
+// Pipeline: grayscale -> blur -> Sobel edge -> threshold ketat -> dilate 1px (garis tebal).
+
+const LA_EDGE = 34        // threshold Sobel utk jadi garis tinta (makin kecil = makin tebal/ banyak)
+const LA_INK = 20         // warna tinta (hampir hitam)
+
+function applyLineArt(dataUrl: string): Promise<string> {
+  return load(dataUrl).then((c) => {
+    const ctx = c.getContext('2d', { willReadFrequently: true })!
+    const w = c.width, h = c.height
+    const img = ctx.getImageData(0, 0, w, h)
+    const src = img.data
+
+    // Grayscale
+    const gray = new Float32Array(w * h)
+    for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+      gray[i] = 0.299 * src[p] + 0.587 * src[p + 1] + 0.114 * src[p + 2]
+    }
+    // Blur ringan biar noise/skin texture gak jadi garis
+    const blurred = boxBlurGray(gray, w, h, 2)
+
+    // Sobel magnitude
+    const mag = sobelMag(blurred, w, h)
+
+    // Output: putih flat; edge di atas threshold = tinta
+    const out = ctx.createImageData(w, h)
+    const o = out.data
+    // Dilate: pixel edge atau tetangga edge -> tinta (garis bold)
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x
+        let ink = mag[i] > LA_EDGE
+        if (!ink && x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+          ink =
+            mag[i - 1] > LA_EDGE || mag[i + 1] > LA_EDGE ||
+            mag[i - w] > LA_EDGE || mag[i + w] > LA_EDGE
+        }
+        const p = i * 4
+        if (ink) {
+          o[p] = LA_INK; o[p + 1] = LA_INK; o[p + 2] = LA_INK
+        } else {
+          o[p] = 255; o[p + 1] = 255; o[p + 2] = 255
+        }
+        o[p + 3] = 255
+      }
+    }
+    ctx.putImageData(out, 0, 0)
+    return c.toDataURL('image/jpeg', 0.92)
+  })
+}
+
+// Grayscale box blur separable (radius r)
+function boxBlurGray(src: Float32Array, w: number, h: number, r: number): Float32Array {
+  const tmp = new Float32Array(w * h)
+  const out = new Float32Array(w * h)
+  for (let y = 0; y < h; y++) {
+    let sum = 0
+    for (let x = -r; x <= r; x++) sum += src[y * w + clampX(x, w)]
+    for (let x = 0; x < w; x++) {
+      tmp[y * w + x] = sum / (2 * r + 1)
+      sum += src[y * w + clampX(x + r + 1, w)] - src[y * w + clampX(x - r, w)]
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0
+    for (let y = -r; y <= r; y++) sum += tmp[clampY(y, h) * w + x]
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / (2 * r + 1)
+      sum += tmp[clampY(y + r + 1, h) * w + x] - tmp[clampY(y - r, h) * w + x]
+    }
+  }
+  return out
+}
+
+// Sobel gradient magnitude dari grayscale
+function sobelMag(g: Float32Array, w: number, h: number): Float32Array {
+  const out = new Float32Array(w * h)
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x
+      const gx =
+        -g[i - w - 1] - 2 * g[i - 1] - g[i + w - 1] +
+         g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1]
+      const gy =
+        -g[i - w - 1] - 2 * g[i - w] - g[i - w + 1] +
+         g[i + w - 1] + 2 * g[i + w] + g[i + w + 1]
+      out[i] = Math.sqrt(gx * gx + gy * gy)
+    }
+  }
+  return out
+}
