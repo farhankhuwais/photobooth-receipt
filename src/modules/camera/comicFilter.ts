@@ -218,12 +218,22 @@ function boxBlur(src: Uint8ClampedArray, w: number, h: number, r: number): Uint8
 function clampX(x: number, w: number): number { return x < 0 ? 0 : x >= w ? w - 1 : x }
 function clampY(y: number, h: number): number { return y < 0 ? 0 : y >= h ? h - 1 : y }
 
-// ---------- lineart (B&W minimalist cartoon line art) ----------
-// Flat white fill + clean bold ink outlines. No shading, no gradients, no texture.
-// Pipeline: grayscale -> blur -> Sobel edge -> threshold ketat -> dilate 1px (garis tebal).
+// ---------- lineart v2 (sketsa pensil hangat, offline) ----------
+// Pipeline: grayscale -> blur -> (Sobel contour + adaptive threshold) ->
+// penebalan garis -> render di atas kertas hangat bertekstur dengan
+// ketebalan tinta bervariasi (kesan goresan pensil).
+const LA_EDGE = 30          // threshold Sobel utk garis kontur (makin kecil = makin tebal)
+const LA_LOCAL_R = 9        // radius mean lokal utk adaptive threshold
+const PAPER = { r: 249, g: 245, b: 235 }  // kertas hangat
+const INK = { r: 54, g: 50, b: 46 }       // grafit (bukan hitam pejal)
 
-const LA_EDGE = 34        // threshold Sobel utk jadi garis tinta (makin kecil = makin tebal/ banyak)
-const LA_INK = 20         // warna tinta (hampir hitam)
+// Noise deterministik 0..1 (hash posisi) — tekstur kertas konsisten antar render.
+function grain01(x: number, y: number): number {
+  let h = (x * 374761393 + y * 668265263) | 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  h = h ^ (h >>> 16)
+  return ((h >>> 0) % 1024) / 1024
+}
 
 function applyLineArt(dataUrl: string): Promise<string> {
   return load(dataUrl).then((c) => {
@@ -237,37 +247,65 @@ function applyLineArt(dataUrl: string): Promise<string> {
     for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
       gray[i] = 0.299 * src[p] + 0.587 * src[p + 1] + 0.114 * src[p + 2]
     }
-    // Blur ringan biar noise/skin texture gak jadi garis
+    // Blur ringan biar noise/kulit gak jadi garis
     const blurred = boxBlurGray(gray, w, h, 2)
 
-    // Sobel magnitude
+    // Mean lokal (radius besar) = versi "lapangan" dari gambar.
+    // Piksel jauh lebih gelap dr lingkungannya = goresan interior (adaptive).
+    const localMean = boxBlurGray(gray, w, h, LA_LOCAL_R)
+
+    // Sobel magnitude utk kontur bersih
     const mag = sobelMag(blurred, w, h)
 
-    // Output: putih flat; edge di atas threshold = tinta
     const out = ctx.createImageData(w, h)
     const o = out.data
-    // Dilate: pixel edge atau tetangga edge -> tinta (garis bold)
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = y * w + x
-        let ink = mag[i] > LA_EDGE
-        if (!ink && x > 0 && x < w - 1 && y > 0 && y < h - 1) {
-          ink =
-            mag[i - 1] > LA_EDGE || mag[i + 1] > LA_EDGE ||
-            mag[i - w] > LA_EDGE || mag[i + w] > LA_EDGE
+
+        // Kekuatan sumber garis: kontur Sobel & kegelapan relatif lokal
+        const darkDiff = (localMean[i] - gray[i]) / 46          // makin negatif makin gelap dr lokal
+        const edgeStr = mag[i] / (LA_EDGE * 4.5)
+        let s = Math.max(darkDiff, edgeStr)
+
+        // Dilate 1px (penebalan garis bold) — ambil kekuatan tetangga juga
+        let isEdge = s > 1
+        if (!isEdge && x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+          const nb = Math.max(
+            sAt(mag, localMean, gray, i - 1), sAt(mag, localMean, gray, i + 1),
+            sAt(mag, localMean, gray, i - w), sAt(mag, localMean, gray, i + w),
+          )
+          if (nb > 1) { isEdge = true; s = Math.max(s, nb * 0.82) }
         }
+
+        // Warna dasar: kertas hangat + grain halus dua oktaf
+        const g1 = grain01(x, y), g2 = grain01(x >> 2, y >> 2)
+        let pr = PAPER.r + (g1 - 0.5) * 9 + (g2 - 0.5) * 7
+        let pg = PAPER.g + (g1 - 0.5) * 9 + (g2 - 0.5) * 7
+        let pb = PAPER.b + (g1 - 0.5) * 9 + (g2 - 0.5) * 7
+
+        if (isEdge) {
+          // Goresan grafit: makin kuat garis makin pekat (0.55..0.96)
+          const sc = Math.min(1, s)
+          const alpha = 0.55 + 0.41 * sc
+          pr = pr + (INK.r - pr) * alpha
+          pg = pg + (INK.g - pg) * alpha
+          pb = pb + (INK.b - pb) * alpha
+        }
+
         const p = i * 4
-        if (ink) {
-          o[p] = LA_INK; o[p + 1] = LA_INK; o[p + 2] = LA_INK
-        } else {
-          o[p] = 255; o[p + 1] = 255; o[p + 2] = 255
-        }
+        o[p] = pr; o[p + 1] = pg; o[p + 2] = pb
         o[p + 3] = 255
       }
     }
     ctx.putImageData(out, 0, 0)
     return c.toDataURL('image/jpeg', 0.92)
   })
+}
+
+// Kekuatan garis di indeks i (dipakai utka dilate): max(sobel, adaptif)
+function sAt(mag: Float32Array, lm: Float32Array, gray: Float32Array, i: number): number {
+  return Math.max((lm[i] - gray[i]) / 46, mag[i] / (LA_EDGE * 4.5))
 }
 
 // Grayscale box blur separable (radius r)
