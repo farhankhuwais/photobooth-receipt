@@ -222,7 +222,6 @@ function clampY(y: number, h: number): number { return y < 0 ? 0 : y >= h ? h - 
 // Pipeline: grayscale -> blur -> (Sobel contour + adaptive threshold) ->
 // penebalan garis -> render di atas kertas hangat bertekstur dengan
 // ketebalan tinta bervariasi (kesan goresan pensil).
-const LA_EDGE = 30          // threshold Sobel utk garis kontur (makin kecil = makin tebal)
 const LA_LOCAL_R = 9        // radius mean lokal utk adaptive threshold
 const PAPER = { r: 249, g: 245, b: 235 }  // kertas hangat
 const INK = { r: 54, g: 50, b: 46 }       // grafit (bukan hitam pejal)
@@ -263,9 +262,10 @@ function applyLineArt(dataUrl: string): Promise<string> {
       for (let x = 0; x < w; x++) {
         const i = y * w + x
 
-        // Kekuatan sumber garis: kontur Sobel & kegelapan relatif lokal
-        const darkDiff = (localMean[i] - gray[i]) / 46          // makin negatif makin gelap dr lokal
-        const edgeStr = mag[i] / (LA_EDGE * 4.5)
+        // Kekuatan sumber garis: kontur Sobel & kegelapan relatif lokal.
+        // Ambang rendah (sensitif) — detail wajah/rambut harus tetap keluar.
+        const darkDiff = (localMean[i] - gray[i]) / 26          // piksel lebih gelap dr lokal >= 26 -> arsiran
+        const edgeStr = mag[i] / 34                             // kontur (setara versi lama)
         let s = Math.max(darkDiff, edgeStr)
 
         // Dilate 1px (penebalan garis bold) — ambil kekuatan tetangga juga
@@ -303,9 +303,9 @@ function applyLineArt(dataUrl: string): Promise<string> {
   })
 }
 
-// Kekuatan garis di indeks i (dipakai utka dilate): max(sobel, adaptif)
+// Kekuatan garis di indeks i (dipakai utk dilate): max(sobel, adaptif)
 function sAt(mag: Float32Array, lm: Float32Array, gray: Float32Array, i: number): number {
-  return Math.max((lm[i] - gray[i]) / 46, mag[i] / (LA_EDGE * 4.5))
+  return Math.max((lm[i] - gray[i]) / 26, mag[i] / 34)
 }
 
 // Grayscale box blur separable (radius r)
