@@ -9,6 +9,7 @@ import { buildPrintJob } from './modules/escpos/encoder'
 import { Settings } from './modules/branding/Settings'
 import { applyFilter, FILTER_LABELS } from './modules/camera/comicFilter'
 import type { PhotoFilter } from './modules/camera/comicFilter'
+import { queueStrip, syncOutbox, outboxCount } from './modules/offline/outbox'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -37,6 +38,35 @@ export default function App() {
   const running = useRef(false)
   // Raw shots (tanpa filter): sumber truth buat re-filter saat ganti filter setelah preview.
   const rawShotsRef = useRef<string[]>([])
+  const [online, setOnline] = useState<boolean>(navigator.onLine)
+  const [outboxN, setOutboxN] = useState<number>(0)
+
+  // Status online/offline + auto-sync outbox pas balik online.
+  useEffect(() => {
+    let stop = false
+    const refresh = async () => {
+      if (stop) return
+      setOnline(navigator.onLine)
+      setOutboxN(await outboxCount())
+    }
+    const goOnline = async () => {
+      setOnline(true)
+      const sent = await syncOutbox()
+      await refresh()
+      if (sent > 0) setMsg(`📶 Balik online — ${sent} foto tersinkron ke server`)
+    }
+    refresh()
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', refresh)
+    const iv = setInterval(refresh, 30000)
+    return () => {
+      stop = true
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', refresh)
+      clearInterval(iv)
+    }
+  }, [])
+
 
   // Load background attract untuk mode saat ini (regular/event) dari DB.
   function loadAttract(m: 'regular' | 'event') {
@@ -455,6 +485,18 @@ export default function App() {
     if (!stripUrl && !stripCanvas.current) return
     // Sudah pernah generate untuk hasil ini -> cuma buka lagi, JANGAN upload ulang.
     if (qrData) { setQrOpen(true); return }
+    // Offline: jangan error — simpan foto ke outbox device, nanti auto-sync pas online.
+    if (!online || !navigator.onLine) {
+      const dataUrl = stripCanvas.current ? stripCanvas.current.toDataURL('image/png') : stripUrl!
+      try {
+        await queueStrip(dataUrl)
+        setOutboxN(await outboxCount())
+        setMsg('📴 Lagi offline — foto disimpan di device & otomatis ke-sync pas online')
+      } catch {
+        setMsg('Offline & gagal simpan lokal — coba lagi')
+      }
+      return
+    }
     setMsg('Membuat QR…')
     try {
       // Hasil sudah fix -> upload ke server, dapat URL, generate QR dari URL.
@@ -465,7 +507,16 @@ export default function App() {
       setQrOpen(true)
       setMsg('')
     } catch {
-      setMsg('Gagal membuat QR')
+      // Server tak terjangkau walau device "online" (tunnel mati, server down, dll)
+      // -> jangan buang foto: simpan ke outbox, auto-sync pas server bisa lagi.
+      const dataUrl = stripCanvas.current ? stripCanvas.current.toDataURL('image/png') : stripUrl!
+      try {
+        await queueStrip(dataUrl)
+        setOutboxN(await outboxCount())
+        setMsg('📴 Server tak terjangkau — foto disimpan di device & otomatis ke-sync pas online')
+      } catch {
+        setMsg('Gagal membuat QR')
+      }
     }
   }
 
@@ -975,10 +1026,10 @@ export default function App() {
                   <span className="material-symbols-outlined text-4xl text-on-surface-variant group-hover:-rotate-90 transition-transform duration-300">refresh</span>
                   <span className="font-headline-md text-headline-md-mobile uppercase text-on-surface">↺ ULANGI</span>
                 </button>
-                <button onClick={onGenerateQr} className="w-full py-4 px-6 bg-tertiary border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
+                <button onClick={onGenerateQr} className={`w-full py-4 px-6 border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden ${online ? 'bg-tertiary' : 'bg-surface-container-high'}`}>
                   <div className="absolute inset-0 bg-white/20 -translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
-                  <span className="material-symbols-outlined text-4xl text-on-tertiary group-hover:scale-110 transition-transform duration-300" style={{fontVariationSettings: "'FILL' 1"}}>qr_code_2</span>
-                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-tertiary">⬡ QR HASIL</span>
+                  <span className="material-symbols-outlined text-4xl text-on-tertiary group-hover:scale-110 transition-transform duration-300" style={{fontVariationSettings: "'FILL' 1"}}>{online ? 'qr_code_2' : 'save'}</span>
+                  <span className="font-headline-md text-headline-md-mobile uppercase text-on-tertiary">{online ? '⬡ QR HASIL' : `⬇ SIMPAN (${outboxN})`}</span>
                 </button>
                 <button onClick={onPrint} className="w-full py-4 px-6 bg-primary-container border-4 border-black flex flex-col items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden">
                   <div className="absolute inset-0 bg-black/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
@@ -1139,6 +1190,17 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Banner status offline — muncul cuma saat offline, biar operator langsung tau kondisi */}
+      {!online && (
+        <div className="fixed top-0 left-0 right-0 z-[120] bg-tertiary border-b-4 border-black px-3 py-1.5 flex items-center justify-center gap-2 pointer-events-none">
+          <span className="material-symbols-outlined text-lg text-on-tertiary">cloud_off</span>
+          <span className="font-label-bold text-label-bold uppercase text-on-tertiary text-[11px] tracking-wider">
+            Mode offline{outboxN > 0 ? ` — ${outboxN} foto nunggu sinkron` : ''} · print tetap jalan
+          </span>
+        </div>
+      )}
     </div>
   )
 }
+
