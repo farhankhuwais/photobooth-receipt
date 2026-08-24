@@ -244,34 +244,7 @@ export function DesignEditor() {
     } catch { /* ignore */ }
   }
 
-  // Template dasar -> generate slot otomatis (di ruang hasil 576x849).
-  function genSlots(base: 'strip3' | 'grid2x2' | 'single'): Slot[] {
-    const top = 160, bot = 360, side = 48
-    const innerW = OUT_W - side * 2
-    if (base === 'single') {
-      const w = innerW, h = Math.round(w * 1.33)
-      return [{ x: side, y: top, w, h, rot: 0 }]
-    }
-    if (base === 'grid2x2') {
-      const g = 32
-      const w = (innerW - g) / 2, h = Math.round(w * 1.33)
-      const cols = [side, side + w + g]
-      const rows = [top, top + h + g]
-      const out: Slot[] = []
-      for (const y of rows) for (const x of cols) out.push({ x, y, w, h, rot: 0 })
-      return out
-    }
-    const g = 28
-    const w = innerW, h = Math.round((OUT_H - top - bot - g * 2) / 3)
-    const out: Slot[] = []
-    for (let i = 0; i < 3; i++) out.push({ x: side, y: top + i * (h + g), w, h, rot: 0 })
-    return out
-  }
-
-  function useTemplate(base: 'strip3' | 'grid2x2' | 'single') {
-    setSlots(genSlots(base))
-    if (!selId) setFrameUrl(null)
-  }
+  // Template dasar dihapus dari UI — slot dibuat manual (+ Slot) atau via deteksi zona.
 
   // Pointer events: drag move / resize (skala balik ke koordinat canvas).
   function onDown(e: React.PointerEvent, mode: DragMode, i: number) {
@@ -515,9 +488,6 @@ export function DesignEditor() {
 
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={addSlot} className="px-2 py-2 border-4 border-black bg-surface text-on-surface font-label-bold text-[11px] uppercase">+ Slot</button>
-        <button onClick={() => useTemplate('strip3')} className="px-2 py-2 border-4 border-black bg-surface text-on-surface font-label-bold text-[11px] uppercase">3 Vertikal</button>
-        <button onClick={() => useTemplate('grid2x2')} className="px-2 py-2 border-4 border-black bg-surface text-on-surface font-label-bold text-[11px] uppercase">2×2</button>
-        <button onClick={() => useTemplate('single')} className="px-2 py-2 border-4 border-black bg-surface text-on-surface font-label-bold text-[11px] uppercase">1 Foto</button>
         <button onClick={() => frameInput.current?.click()} className="px-2 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold text-[11px] uppercase">Bingkai PNG</button>
         <input ref={frameInput} type="file" accept="image/png,image/*" hidden onChange={onFrameFile} />
       </div>
