@@ -21,6 +21,101 @@ const SCALE = DISP_W / OUT_W
 
 type DragMode = 'move' | 'resize' | null
 
+// ===== Deteksi zona warna di bingkai (mis. kotak hijau muda buatan Canva) =====
+// Piksel yang mirip warna target (dalam toleransi) dikelompokkan jadi zona,
+// lalu tiap zona bisa dipakai langsung sebagai slot foto.
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const m = hex.replace('#', '')
+  return { r: parseInt(m.slice(0, 2), 16), g: parseInt(m.slice(2, 4), 16), b: parseInt(m.slice(4, 6), 16) }
+}
+
+function loadImageEl(src: string): Promise<HTMLImageElement> {
+  return new Promise((res, rej) => {
+    const im = new Image()
+    im.onload = () => res(im)
+    im.onerror = rej
+    im.src = src
+  })
+}
+
+interface ZoneBox { x: number; y: number; w: number; h: number }
+
+// Gabungkan dua bbox yang saling tumpang-tindih (hasil scan yang "pecah"
+// karena antialias/gradien) biar satu zona fisik = satu slot.
+function mergeBoxes(bs: ZoneBox[]): ZoneBox[] {
+  let changed = true
+  while (changed) {
+    changed = false
+    outer: for (let i = 0; i < bs.length; i++) {
+      for (let j = i + 1; j < bs.length; j++) {
+        const a = bs[i], b = bs[j]
+        const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x))
+        const iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y))
+        const inter = ix * iy
+        const small = Math.min(a.w * a.h, b.w * b.h)
+        if (inter > 0.5 * small) {
+          const nx = Math.min(a.x, b.x), ny = Math.min(a.y, b.y)
+          const nw = Math.max(a.x + a.w, b.x + b.w) - nx
+          const nh = Math.max(a.y + a.h, b.y + b.h) - ny
+          bs[i] = { x: nx, y: ny, w: nw, h: nh }
+          bs.splice(j, 1)
+          changed = true
+          break outer
+        }
+      }
+    }
+  }
+  return bs
+}
+
+// Scan piksel gambar -> daftar bbox zona warna (di ruang koordinat gambar asli).
+async function scanColorZones(src: string, colorHex: string, tol: number): Promise<ZoneBox[]> {
+  const img = await loadImageEl(src)
+  const W = img.naturalWidth, H = img.naturalHeight
+  if (!W || !H) return []
+  const c = document.createElement('canvas')
+  c.width = W; c.height = H
+  const ctx = c.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return []
+  ctx.drawImage(img, 0, 0)
+  const data = ctx.getImageData(0, 0, W, H).data
+  const t = hexToRgb(colorHex)
+  const tol2 = tol * tol * 3
+  const mask = new Uint8Array(W * H)
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const dr = data[i] - t.r, dg = data[i + 1] - t.g, db = data[i + 2] - t.b
+    if (dr * dr + dg * dg + db * db <= tol2) mask[p] = 1
+  }
+  // Connected components (flood fill iteratif).
+  const visited = new Uint8Array(W * H)
+  const raw: ZoneBox[] = []
+  const stack: number[] = []
+  for (let p0 = 0; p0 < mask.length; p0++) {
+    if (!mask[p0] || visited[p0]) continue
+    let minX = W, minY = H, maxX = 0, maxY = 0, n = 0
+    stack.length = 0; stack.push(p0); visited[p0] = 1
+    while (stack.length) {
+      const q = stack.pop()!
+      const x = q % W, y = (q / W) | 0
+      n++
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+      if (x > 0 && mask[q - 1] && !visited[q - 1]) { visited[q - 1] = 1; stack.push(q - 1) }
+      if (x < W - 1 && mask[q + 1] && !visited[q + 1]) { visited[q + 1] = 1; stack.push(q + 1) }
+      if (y > 0 && mask[q - W] && !visited[q - W]) { visited[q - W] = 1; stack.push(q - W) }
+      if (y < H - 1 && mask[q + W] && !visited[q + W]) { visited[q + W] = 1; stack.push(q + W) }
+    }
+    // Buang noise: zona minimal 24px per sisi & isi >=35% bbox.
+    if (maxX - minX + 1 >= 24 && maxY - minY + 1 >= 24 && n >= 0.35 * (maxX - minX + 1) * (maxY - minY + 1)) {
+      raw.push({ x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 })
+    }
+  }
+  return mergeBoxes(raw)
+}
+
+
 // Editor slot drag-drop untuk design/mockup photobooth.
 // Operator lihat preview (skala mockup), drag/resize/rotate tiap slot foto,
 // lalu simpan. Posisi persis mengikuti mockup yang diupload.
@@ -35,6 +130,42 @@ export function DesignEditor() {
   const [active, setActive] = useState<number | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ mode: DragMode; i: number; sx: number; sy: number; orig: Slot } | null>(null)
+
+  // ===== Deteksi zona warna =====
+  const [zoneColor, setZoneColor] = useState<string>('#a5d6a7') // default hijau muda
+  const [zoneTol, setZoneTol] = useState<number>(60)            // toleransi kemiripan warna
+  const [zoneBoxes, setZoneBoxes] = useState<ZoneBox[] | null>(null) // null = belum scan
+  const [scanning, setScanning] = useState(false)
+
+  async function detectZones() {
+    if (!frameUrl || scanning) return
+    setScanning(true)
+    try {
+      const raw = await scanColorZones(frameUrl, zoneColor, zoneTol)
+      // Scale hasil scan (koordinat piksel gambar asli) -> ruang hasil 576x849,
+      // sekaligus dipakai untuk overlay preview.
+      const im = await loadImageEl(frameUrl)
+      const kx = OUT_W / (im.naturalWidth || OUT_W)
+      const ky = OUT_H / (im.naturalHeight || OUT_H)
+      setZoneBoxes(raw.map((z) => ({
+        x: Math.round(z.x * kx), y: Math.round(z.y * ky),
+        w: Math.round(z.w * kx), h: Math.round(z.h * ky),
+      })))
+    } catch {
+      setZoneBoxes([])
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  // Pakai zona ke-i sebagai slot baru (zona sudah di ruang hasil 576x849).
+  function applyZone(i: number) {
+    if (!zoneBoxes) return
+    const z = zoneBoxes[i]
+    if (!z) return
+    setSlots((prev) => [...prev, { ...z, rot: 0 }])
+  }
+
 
   // Load daftar design existing.
   const loadList = useCallback(async () => {
@@ -264,6 +395,21 @@ export function DesignEditor() {
           {frameUrl && (
             <img src={frameUrl} alt="" className="absolute inset-0 w-full h-full object-fill pointer-events-none" />
           )}
+          {/* Overlay zona hasil scan (hijau transparan) — klik +N = jadi slot */}
+          {zoneBoxes?.map((z, i) => (
+            <div
+              key={`z${i}`}
+              style={{ left: z.x, top: z.y, width: z.w, height: z.h }}
+              className="absolute border-2 border-dashed border-green-600 bg-green-400/30 pointer-events-none flex items-start justify-end"
+            >
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => applyZone(i)}
+                title="Pakai zona ini sebagai slot"
+                className="m-1 w-6 h-6 bg-green-600 text-white text-[10px] font-bold border-2 border-black pointer-events-auto"
+              >+{i + 1}</button>
+            </div>
+          ))}
           {slots.map((s, i) => (
             <div
               key={i}
@@ -332,6 +478,47 @@ export function DesignEditor() {
         <button onClick={() => frameInput.current?.click()} className="px-2 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold text-[11px] uppercase">Bingkai PNG</button>
         <input ref={frameInput} type="file" accept="image/png,image/*" hidden onChange={onFrameFile} />
       </div>
+
+      {/* Deteksi zona warna: scan bingkai -> zona jadi kandidat slot 1-klik */}
+      {frameUrl && (
+        <div className="flex flex-col gap-1 border-2 border-dashed border-black p-2 bg-surface-container-low">
+          <span className="font-label-bold text-label-bold text-[11px] uppercase tracking-wider">Deteksi Zona (kotak warna di bingkai)</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="flex items-center gap-1 text-[10px] uppercase text-on-surface-variant">
+              Warna
+              <input
+                type="color"
+                value={zoneColor}
+                onChange={(e) => setZoneColor(e.target.value)}
+                className="w-8 h-8 border-2 border-black bg-white cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[10px] uppercase text-on-surface-variant">
+              Toleransi
+              <input
+                type="range" min={10} max={120} step={5} value={zoneTol}
+                onChange={(e) => setZoneTol(Number(e.target.value))}
+                className="w-24 accent-black"
+              />
+              <span className="text-[10px] w-6">{zoneTol}</span>
+            </label>
+            <button
+              onClick={detectZones}
+              disabled={scanning}
+              className="px-2 py-2 border-4 border-black bg-green-600 text-white font-label-bold text-[11px] uppercase disabled:opacity-50"
+            >
+              {scanning ? 'Memindai…' : '🔍 Scan Zona'}
+            </button>
+            {zoneBoxes && (
+              <>
+                <span className="text-[10px] uppercase text-on-surface-variant">{zoneBoxes.length} zona ketemu — klik +N di preview untuk pakai</span>
+                <button onClick={() => setZoneBoxes(null)} className="px-2 py-1 border-2 border-black bg-surface text-on-surface font-label-bold text-[10px] uppercase">×</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
 
       <input
         value={name}
