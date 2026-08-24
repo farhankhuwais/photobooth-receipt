@@ -101,3 +101,11 @@ body {
   60% { opacity: 1; transform: scale(1.04); }
   100% { opacity: 1; transform: scale(1); }
 }
+
+/* Anti-zoom booth: blokir pinch-zoom & double-tap zoom (iOS/Android) */
+#root {
+  touch-action: pan-y;
+}
+html, body {
+  overscroll-behavior: none;
+}
