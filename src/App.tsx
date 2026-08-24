@@ -548,6 +548,7 @@ export default function App() {
     setQrData(null)
     setQrOpen(false)
     setMsg('')
+    setFilter('none')  // sesi baru mulai bersih: filter kembali ke default
   }
 
   function onSaveBin() {
