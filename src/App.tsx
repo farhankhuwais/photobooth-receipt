@@ -1060,9 +1060,9 @@ export default function App() {
                 </button>
               </div>
               
-              {/* Akhiri sesi -> balik ke layar awal "Sentuh untuk mulai" */}
+              {/* Akhiri sesi -> balik ke layar awal "Sentuh untuk mulai" + filter reset ke default */}
               <button
-                onClick={goAttract}
+                onClick={() => { setFilter('none'); goAttract() }}
                 className="w-full py-3 px-6 bg-surface border-4 border-black flex items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden"
               >
                 <span className="material-symbols-outlined text-3xl text-on-surface group-hover:scale-110 transition-transform">exit_to_app</span>
