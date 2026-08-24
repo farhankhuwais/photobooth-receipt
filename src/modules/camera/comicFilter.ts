@@ -222,7 +222,7 @@ function clampY(y: number, h: number): number { return y < 0 ? 0 : y >= h ? h - 
 // Pipeline: grayscale -> blur -> (Sobel contour + adaptive threshold) ->
 // penebalan garis -> render di atas kertas hangat bertekstur dengan
 // ketebalan tinta bervariasi (kesan goresan pensil).
-const LA_LOCAL_R = 9        // radius mean lokal utk adaptive threshold
+const LA_LOCAL_R = 6        // radius mean lokal utk adaptive threshold (kecil = detail halus kebaca)
 const PAPER = { r: 249, g: 245, b: 235 }  // kertas hangat
 const INK = { r: 54, g: 50, b: 46 }       // grafit (bukan hitam pejal)
 
@@ -263,10 +263,14 @@ function applyLineArt(dataUrl: string): Promise<string> {
         const i = y * w + x
 
         // Kekuatan sumber garis: kontur Sobel & kegelapan relatif lokal.
-        // Ambang rendah (sensitif) — detail wajah/rambut harus tetap keluar.
-        const darkDiff = (localMean[i] - gray[i]) / 26          // piksel lebih gelap dr lokal >= 26 -> arsiran
-        const edgeStr = mag[i] / 34                             // kontur (setara versi lama)
+        // Sangat sensitif — detail halus wajah harus kelihatan jelas.
+        const darkDiff = (localMean[i] - gray[i]) / 16          // piksel lebih gelap dr lokal >= 16 -> arsiran
+        const edgeStr = mag[i] / 22                             // kontur lebih pekat
         let s = Math.max(darkDiff, edgeStr)
+
+        // Arsiran sekunder: area agak gelap (bukan garis) tetap digores tipis
+        // biar rambut/bayangan punya isi pensil, bukan bolong putih.
+        const shade = gray[i] < 150 ? Math.min(0.38, (150 - gray[i]) / 210) : 0
 
         // Dilate 1px (penebalan garis bold) — ambil kekuatan tetangga juga
         let isEdge = s > 1
@@ -291,6 +295,12 @@ function applyLineArt(dataUrl: string): Promise<string> {
           pr = pr + (INK.r - pr) * alpha
           pg = pg + (INK.g - pg) * alpha
           pb = pb + (INK.b - pb) * alpha
+        } else if (shade > 0) {
+          // Isi arsiran tipis utk area gelap (rambut/bayangan) + grain biar kayak goresan
+          const a = shade * (0.75 + 0.5 * g1)
+          pr = pr + (INK.r - pr) * a
+          pg = pg + (INK.g - pg) * a
+          pb = pb + (INK.b - pb) * a
         }
 
         const p = i * 4
@@ -305,7 +315,7 @@ function applyLineArt(dataUrl: string): Promise<string> {
 
 // Kekuatan garis di indeks i (dipakai utk dilate): max(sobel, adaptif)
 function sAt(mag: Float32Array, lm: Float32Array, gray: Float32Array, i: number): number {
-  return Math.max((lm[i] - gray[i]) / 26, mag[i] / 34)
+  return Math.max((lm[i] - gray[i]) / 16, mag[i] / 22)
 }
 
 // Grayscale box blur separable (radius r)
