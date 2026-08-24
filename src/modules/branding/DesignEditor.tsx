@@ -136,6 +136,41 @@ export function DesignEditor() {
   const [zoneTol, setZoneTol] = useState<number>(60)            // toleransi kemiripan warna
   const [zoneBoxes, setZoneBoxes] = useState<ZoneBox[] | null>(null) // null = belum scan
   const [scanning, setScanning] = useState(false)
+  const [stripZones, setStripZones] = useState<boolean>(true)   // hapus zona dr bingkai saat simpan
+
+  // Proses file bingkai: piksel yang mirip warna zona dibikin transparan (alpha 0),
+  // biar foto keliatan lewatnya. Dipanggil saat simpan kalau stripZones aktif.
+  async function stripFrameZones(file: File): Promise<File> {
+    const url = URL.createObjectURL(file)
+    try {
+      const im = await loadImageEl(url)
+      const W = im.naturalWidth, H = im.naturalHeight
+      if (!W || !H) return file
+      const c = document.createElement('canvas')
+      c.width = W; c.height = H
+      const ctx = c.getContext('2d', { willReadFrequently: true })
+      if (!ctx) return file
+      ctx.drawImage(im, 0, 0)
+      const idata = ctx.getImageData(0, 0, W, H)
+      const px = idata.data
+      const t = hexToRgb(zoneColor)
+      const tol2 = zoneTol * zoneTol * 3
+      let hit = 0
+      for (let i = 0; i < px.length; i += 4) {
+        const dr = px[i] - t.r, dg = px[i + 1] - t.g, db = px[i + 2] - t.b
+        if (dr * dr + dg * dg + db * db <= tol2) { px[i + 3] = 0; hit++ }
+      }
+      if (!hit) return file // tidak ada piksel yg cocok -> biarkan file asli
+      ctx.putImageData(idata, 0, 0)
+      const blob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/png'))
+      if (!blob) return file
+      return new File([blob], file.name.replace(/\.[^.]+$/, '') + '-transparent.png', { type: 'image/png' })
+    } catch {
+      return file
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
 
   async function detectZones() {
     if (!frameUrl || scanning) return
@@ -298,7 +333,15 @@ export function DesignEditor() {
       fd.append('canvas_w', String(OUT_W))
       fd.append('canvas_h', String(OUT_H))
       fd.append('slots', JSON.stringify(slots))
-      if (framePending) fd.append('image', framePending)
+      // Bingkai: kalau "hapus zona" aktif, piksel zona warna dibikin transparan
+      // dulu sebelum diupload, dan preview di-update ke versi transparannya.
+      let frameFile = framePending
+      if (frameFile && stripZones) {
+        frameFile = await stripFrameZones(frameFile)
+        setFrameUrl(URL.createObjectURL(frameFile))
+        setFramePending(frameFile)
+      }
+      if (frameFile) fd.append('image', frameFile)
       if (selId) {
         await fetch(`/api/designs/${selId}`, { method: 'PUT', body: fd })
       } else {
@@ -516,6 +559,15 @@ export function DesignEditor() {
               </>
             )}
           </div>
+          <label className="flex items-center gap-2 text-[10px] uppercase text-on-surface-variant">
+            <input
+              type="checkbox"
+              checked={stripZones}
+              onChange={(e) => setStripZones(e.target.checked)}
+              className="w-4 h-4 accent-black"
+            />
+            Hapus warna zona dari bingkai saat disimpan (jadi transparan, foto keliatan)
+          </label>
         </div>
       )}
 
