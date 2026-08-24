@@ -1157,9 +1157,12 @@ export default function App() {
 
       {showSettings && <Settings onClose={() => setShowSettings(false)} onAttractChange={reloadAttract} />}
 
-      {/* Badge versi bundle — buat verifikasi live tanpa devtools (cek SW cache). */}
+      {/* Badge versi bundle — buat verifikasi live tanpa devtools (cek SW cache).
+          Pakai __BUILD_HASH__ (di-inject vite.config dari BUILD_HASH/Date.now tiap build),
+          jadi nilainya SELALU beda tiap build -> gampang cocokkan dgn nama bundle di server
+          (assets/index-<HASH>.js). */}
       <div className="fixed bottom-1 right-1 z-[60] bg-black/70 text-white text-[10px] px-2 py-0.5 rounded font-mono select-none pointer-events-none">
-        v={import.meta.env.VITE_BUILD_HASH || 'dev'}
+        v={__BUILD_HASH__}
       </div>
 
       {/* Modal konfirmasi retake slot — klik slot → confirm dulu, baru jepret ulang. */}
