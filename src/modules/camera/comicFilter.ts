@@ -6,7 +6,7 @@
 // - 'sepia'   : sepia klasik polos tanpa vignette
 // - 'mono'    : hitam-putih kontras (film B&W)
 
-export type PhotoFilter = 'none' | 'comic' | 'vintage' | 'sepia' | 'mono' | 'lineart'
+export type PhotoFilter = 'none' | 'comic' | 'vintage' | 'sepia' | 'mono' | 'lineart' | 'ai-sketch'
 
 export const FILTER_LABELS: Record<PhotoFilter, string> = {
   none: 'Tanpa',
@@ -15,14 +15,30 @@ export const FILTER_LABELS: Record<PhotoFilter, string> = {
   sepia: 'Sepia',
   mono: 'Mono',
   lineart: 'Sketsa',
+  'ai-sketch': 'Sketsa AI ✨',
 }
 
 export function applyFilter(dataUrl: string, f: PhotoFilter): Promise<string> {
   if (f === 'none') return Promise.resolve(dataUrl)
   if (f === 'comic') return applyComic(dataUrl)
   if (f === 'lineart') return applyLineArt(dataUrl)
+  if (f === 'ai-sketch') return applyAiSketch(dataUrl)
   return applySimple(dataUrl, f)
 }
+
+// ---------- ai-sketch (Gemini via server, fallback lineart lokal) ----------
+// AI butuh internet + API key; kalau gagal -> jatuh ke sketsa lokal biar tamu
+// tetap dilayani (pesan error ditampilkan lewat window event).
+async function applyAiSketch(dataUrl: string): Promise<string> {
+  try {
+    const { aiSketch } = await import('./aiSketch')
+    return await aiSketch(dataUrl)
+  } catch (e) {
+    window.dispatchEvent(new CustomEvent('pb-ai-fallback', { detail: String((e as Error).message || e) }))
+    return applyLineArt(dataUrl)
+  }
+}
+
 
 // ---------- comic (anime cel-shading) ----------
 

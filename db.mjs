@@ -81,6 +81,14 @@ export async function initDb() {
       branding    JSONB NOT NULL,
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    CREATE TABLE IF NOT EXISTS ai_settings (
+      id          INTEGER PRIMARY KEY DEFAULT 1,
+      api_key     TEXT NOT NULL DEFAULT '',
+      model       TEXT NOT NULL DEFAULT 'gemini-2.5-flash-image',
+      prompt      TEXT NOT NULL DEFAULT '',
+      enabled     BOOLEAN NOT NULL DEFAULT false,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS attract_assets (
       mode        TEXT PRIMARY KEY,
       media_type  TEXT NOT NULL,
@@ -342,6 +350,42 @@ export async function saveConfig(config) {
      VALUES (1, $1, $2, $3, $4, now())
      ON CONFLICT (id) DO UPDATE SET mode = EXCLUDED.mode, price = EXCLUDED.price, preset_name = EXCLUDED.preset_name, branding = EXCLUDED.branding, updated_at = now()`,
     [mode, price, preset_name, branding]
+  )
+}
+
+// ── AI settings (Gemini API key dkk; API key TIDAK pernah dikirim ke frontend) ──
+const DEFAULT_AI_PROMPT =
+  'Transform this photo into a minimalist black-and-white pencil sketch illustration. Clean thin line art on plain white paper background, soft hand-drawn pencil strokes, high contrast between the subject and background. Keep the exact same person, pose and composition. No color, no shading blocks — pure sketch lines only.'
+
+export async function getAiSettings() {
+  try {
+    const r = await pool.query('SELECT api_key, model, prompt, enabled FROM ai_settings WHERE id = 1')
+    if (r.rows[0]) return r.rows[0]
+    // Seed baris default sekali.
+    await pool.query(
+      `INSERT INTO ai_settings (id, api_key, model, prompt, enabled)
+       VALUES (1, '', 'gemini-2.5-flash-image', $1, false)
+       ON CONFLICT (id) DO NOTHING`,
+      [DEFAULT_AI_PROMPT]
+    )
+    const r2 = await pool.query('SELECT api_key, model, prompt, enabled FROM ai_settings WHERE id = 1')
+    return r2.rows[0] || { api_key: '', model: 'gemini-2.5-flash-image', prompt: DEFAULT_AI_PROMPT, enabled: false }
+  } catch {
+    return { api_key: '', model: 'gemini-2.5-flash-image', prompt: DEFAULT_AI_PROMPT, enabled: false }
+  }
+}
+
+export async function saveAiSettings(s) {
+  const cur = await getAiSettings()
+  const apiKey = typeof s.api_key === 'string' ? s.api_key : cur.api_key
+  const model = typeof s.model === 'string' && s.model.trim() ? s.model.trim() : cur.model
+  const prompt = typeof s.prompt === 'string' && s.prompt.trim() ? s.prompt.trim() : cur.prompt
+  const enabled = typeof s.enabled === 'boolean' ? s.enabled : cur.enabled
+  await pool.query(
+    `INSERT INTO ai_settings (id, api_key, model, prompt, enabled, updated_at)
+     VALUES (1, $1, $2, $3, $4, now())
+     ON CONFLICT (id) DO UPDATE SET api_key = EXCLUDED.api_key, model = EXCLUDED.model, prompt = EXCLUDED.prompt, enabled = EXCLUDED.enabled, updated_at = now()`,
+    [apiKey, model, prompt, enabled]
   )
 }
 

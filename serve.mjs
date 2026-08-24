@@ -14,7 +14,7 @@ import multer from 'multer'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { initDb, savePhoto, getPhoto, listPhotos, deletePhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign } from './db.mjs'
+import { initDb, savePhoto, getPhoto, listPhotos, deletePhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign, getAiSettings, saveAiSettings } from './db.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -140,6 +140,116 @@ app.post('/api/config', express.json({ limit: '1mb' }), async (req, res) => {
     res.status(500).json({ error: String(e) })
   }
 })
+
+// ── AI Sketch (Gemini) — settings + generate ───────────────────────────────
+// GET: status utk frontend. API key TIDAK pernah dikirim ke client — cuma flag ada/tidak.
+app.get('/api/ai/status', async (_req, res) => {
+  try {
+    const s = await getAiSettings()
+    res.json({ enabled: !!s.enabled && !!s.api_key, hasKey: !!s.api_key, model: s.model })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// GET admin view: key disamarkan (hanya 6 char terakhir) biar operator bisa cek key mana yg tersimpan.
+app.get('/api/ai/settings', async (_req, res) => {
+  try {
+    const s = await getAiSettings()
+    res.json({
+      api_key_masked: s.api_key ? `••••••••${s.api_key.slice(-6)}` : '',
+      model: s.model,
+      prompt: s.prompt,
+      enabled: !!s.enabled && !!s.api_key,
+      hasKey: !!s.api_key,
+    })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// POST admin: simpan. api_key kosong string = hapus; tidak dikirim = tetap.
+app.post('/api/ai/settings', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const b = req.body || {}
+    await saveAiSettings({
+      api_key: typeof b.api_key === 'string' ? b.api_key.trim() : undefined,
+      model: typeof b.model === 'string' ? b.model : undefined,
+      prompt: typeof b.prompt === 'string' ? b.prompt : undefined,
+      enabled: typeof b.enabled === 'boolean' ? b.enabled : undefined,
+    })
+    const s = await getAiSettings()
+    res.json({
+      ok: true,
+      api_key_masked: s.api_key ? `••••••••${s.api_key.slice(-6)}` : '',
+      model: s.model,
+      prompt: s.prompt,
+      enabled: !!s.enabled && !!s.api_key,
+      hasKey: !!s.api_key,
+    })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// POST: foto (dataURL base64 atau multipart image) -> Gemini -> sketsa (dataURL).
+// Selalu balik JSON { ok } ATAU { error }; frontend wajib punya fallback lokal.
+app.post('/api/ai/sketch', upload.single('image'), async (req, res) => {
+  try {
+    const s = await getAiSettings()
+    if (!s.enabled || !s.api_key) return res.status(400).json({ error: 'AI sketch belum diaktifkan / API key belum diisi' })
+
+    // Sumber gambar: file upload (multipart) ATAU JSON {image: dataURL}.
+    let buf = req.file?.buffer
+    let mime = req.file?.mimetype || 'image/png'
+    if (!buf) {
+      const body = req.body || {}
+      const dataUrl = typeof body.image === 'string' ? body.image : ''
+      const m = /^data:(image\/[a-zA-Z+]+);base64,(.+)$/.exec(dataUrl)
+      if (!m) return res.status(400).json({ error: 'no image' })
+      mime = m[1]
+      buf = Buffer.from(m[2], 'base64')
+    }
+    if (buf.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'gambar terlalu besar (max 8MB)' })
+
+    const prompt = s.prompt?.trim() || 'Transform this photo into a minimalist black-and-white pencil sketch.'
+    const model = s.model || 'gemini-2.5-flash-image'
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 60000)
+
+    const gres = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(s.api_key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mime, data: buf.toString('base64') } },
+          ],
+        }],
+        generationConfig: { responseModalities: ['IMAGE'] },
+      }),
+    }).finally(() => clearTimeout(timeout))
+
+    if (!gres.ok) {
+      const txt = await gres.text().catch(() => '')
+      console.error('[ai-sketch] gemini error', gres.status, txt.slice(0, 300))
+      return res.status(502).json({ error: `Gemini error ${gres.status}` })
+    }
+    const gj = await gres.json()
+    const parts = gj?.candidates?.[0]?.content?.parts || []
+    const imgPart = parts.find((p) => p.inlineData || p.inline_data)
+    const ip = imgPart?.inlineData || imgPart?.inline_data
+    if (!ip?.data) return res.status(502).json({ error: 'Gemini tidak mengembalikan gambar' })
+    res.json({ image: `data:${ip.mimeType || ip.mime_type || 'image/png'};base64,${ip.data}` })
+  } catch (e) {
+    const msg = e?.name === 'AbortError' ? 'timeout — Gemini terlalu lama merespons' : String(e)
+    console.error('[ai-sketch]', msg)
+    res.status(502).json({ error: msg })
+  }
+})
+
 
 // ── Custom frame gallery (operator upload, customer pilih di booth) ──
 // Daftar frame (tanpa blob) untuk dirender sebagai pilihan di booth.

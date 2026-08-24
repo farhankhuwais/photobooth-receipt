@@ -2,6 +2,104 @@ import { useRef, useState, useEffect } from 'react'
 import { TemplateId, useSession, AppMode } from '../../store/useSession'
 import { DesignEditor } from './DesignEditor'
 
+// ── Panel AI Sketch (Gemini) — operator masukkan API key di sini ──────────
+interface AiSettingsView {
+  api_key_masked: string
+  model: string
+  prompt: string
+  enabled: boolean
+  hasKey: boolean
+}
+
+function AiSketchSettings() {
+  const [st, setSt] = useState<AiSettingsView | null>(null)
+  const [keyInput, setKeyInput] = useState('')
+  const [promptInput, setPromptInput] = useState('')
+  const [enabled, setEnabled] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    fetch('/api/ai/settings').then((r) => r.json()).then((j: AiSettingsView) => {
+      setSt(j)
+      setPromptInput(j.prompt || '')
+      setEnabled(!!j.enabled)
+    }).catch(() => setMsg('Gagal memuat setting AI'))
+  }, [])
+
+  async function save(extra: Record<string, unknown> = {}) {
+    setBusy(true); setMsg('')
+    try {
+      const body: Record<string, unknown> = { prompt: promptInput, enabled, ...extra }
+      if (keyInput.trim()) body.api_key = keyInput.trim()
+      const r = await fetch('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'gagal simpan')
+      setSt(j as AiSettingsView)
+      setKeyInput('')
+      setMsg('✅ Tersimpan')
+      window.dispatchEvent(new CustomEvent('pb-ai-status-changed'))
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`)
+    } finally {
+      setBusy(false)
+      setTimeout(() => setMsg(''), 4000)
+    }
+  }
+
+  return (
+    <Panel title="AI Sketch (Gemini)" hint="Filter 'Sketsa AI' di booth pakai Google Gemini. Butuh internet & API key (aistudio.google.com → Get API key, ada free tier).">
+      <div className="flex flex-col gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase text-on-surface-variant">Gemini API Key</span>
+          <input
+            type="password"
+            value={keyInput}
+            onChange={(e) => setKeyInput(e.target.value)}
+            placeholder={st?.api_key_masked ? `Tersimpan ${st.api_key_masked} — isi untuk ganti` : 'Tempel API key di sini'}
+            autoComplete="off"
+            className="w-full border-2 border-black px-2 py-2 text-[12px] bg-surface-container-lowest text-on-surface"
+          />
+        </label>
+
+        <label className="flex items-center gap-2 text-[11px] uppercase font-bold">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="w-4 h-4 accent-black" />
+          Aktifkan filter Sketsa AI di booth
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase text-on-surface-variant">Gaya Sketsa (prompt ke AI)</span>
+          <textarea
+            value={promptInput}
+            onChange={(e) => setPromptInput(e.target.value)}
+            rows={4}
+            className="w-full border-2 border-black px-2 py-2 text-[11px] bg-surface-container-lowest text-on-surface normal-case"
+          />
+          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">Bisa diganti sesuai selera, mis. tambah "vintage paper texture" atau "thick ink lines".</span>
+        </label>
+
+        <div className="flex items-center gap-2">
+          <button onClick={() => save()} disabled={busy} className="px-3 py-2 border-4 border-black bg-secondary-container text-on-secondary-container font-label-bold uppercase text-[11px] neo-button brutal-shadow-sm disabled:opacity-50">
+            {busy ? 'Menyimpan…' : 'Simpan Setting AI'}
+          </button>
+          {st && !st.hasKey && (
+            <button onClick={() => save({ enabled: true, api_key: keyInput.trim() })} disabled={busy || !keyInput.trim()} className="px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase text-[11px] neo-button disabled:opacity-50" title="Isi API key dulu">
+              Simpan + Aktifkan
+            </button>
+          )}
+          {msg && <span className="text-[11px] font-bold">{msg}</span>}
+        </div>
+
+        {st && (
+          <span className="text-[10px] normal-case tracking-normal text-on-surface-variant">
+            Status: {st.enabled && st.hasKey ? '🟢 AKTIF' : st.hasKey ? '🟡 key ada, filter belum diaktifkan' : '🔴 belum ada API key'} · Model: {st.model}
+          </span>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
 // Panel pembungkus seragam — rapi & konsisten antar grup setting.
 function Panel({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -352,6 +450,7 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
               ['frames', 'Bingkai'],
               ['design', 'Desain Mockup'],
               ['attract', 'Layar Awal'],
+              ['ai', 'AI Sketch'],
               ['save', 'Simpan'],
             ] as const).map(([id, label]) => (
               <button
@@ -520,6 +619,8 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
                 <DesignEditor />
               </div>
             )}
+
+            {activeTab === 'ai' && <AiSketchSettings />}
 
             {activeTab === 'attract' && (
               <Panel title={`Layar Awal (Attract) — ${mode === 'event' ? 'Event' : 'Regular'}`} hint='Background & ikon untuk layar "Sentuh untuk mulai". Tersimpan di DB, otomatis tiap mode.'>

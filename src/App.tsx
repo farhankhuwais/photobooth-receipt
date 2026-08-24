@@ -10,6 +10,7 @@ import { Settings } from './modules/branding/Settings'
 import { applyFilter, FILTER_LABELS } from './modules/camera/comicFilter'
 import type { PhotoFilter } from './modules/camera/comicFilter'
 import { queueStrip, syncOutbox, outboxCount } from './modules/offline/outbox'
+import { fetchAiStatus } from './modules/camera/aiSketch'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -40,6 +41,26 @@ export default function App() {
   const rawShotsRef = useRef<string[]>([])
   const [online, setOnline] = useState<boolean>(navigator.onLine)
   const [outboxN, setOutboxN] = useState<number>(0)
+  const [aiEnabled, setAiEnabled] = useState<boolean>(false)
+
+  // Cek status AI sketch (aktif kalau operator isi API key + enable di Settings).
+  useEffect(() => {
+    fetchAiStatus().then((s) => setAiEnabled(!!s.enabled))
+    const onAiStatus = () => fetchAiStatus().then((s) => setAiEnabled(!!s.enabled))
+    window.addEventListener('pb-ai-status-changed', onAiStatus)
+    return () => window.removeEventListener('pb-ai-status-changed', onAiStatus)
+  }, [])
+
+  // AI gagal -> sudah otomatis fallback ke sketsa lokal; tampilkan pesannya.
+  useEffect(() => {
+    const onFallback = (e: Event) => {
+      const detail = (e as CustomEvent).detail || ''
+      setMsg(`⚠️ Sketsa AI gagal (${detail}) — pakai sketsa lokal`)
+      setTimeout(() => setMsg(''), 6000)
+    }
+    window.addEventListener('pb-ai-fallback', onFallback)
+    return () => window.removeEventListener('pb-ai-fallback', onFallback)
+  }, [])
 
   // Status online/offline + auto-sync outbox pas balik online.
   useEffect(() => {
@@ -720,14 +741,14 @@ export default function App() {
                     <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider relative z-10">Mulai Jepret</span>
                     <span className="material-symbols-outlined text-[32px] md:text-[48px] relative z-10" style={{fontVariationSettings: "'FILL' 1"}}>photo_camera</span>
                   </button>
-                  {/* Dropdown pilih filter: Tanpa / Komik / Vintage / Sepia / Mono / Sketsa */}
+                  {/* Dropdown pilih filter: Tanpa / Komik / Vintage / Sepia / Mono / Sketsa / Sketsa AI */}
                   <select
                     value={filter}
                     onChange={(e) => changeFilter(e.target.value as PhotoFilter)}
                     className="px-2 py-2 border-4 border-black brutal-shadow-sm bg-surface text-on-surface text-[12px] font-bold uppercase tracking-wide"
                     title="Pilih filter"
                   >
-                    {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
+                    {(Object.keys(FILTER_LABELS) as PhotoFilter[]).filter((f) => f !== 'ai-sketch' || aiEnabled).map((f) => (
                       <option key={f} value={f}>{FILTER_LABELS[f]}</option>
                     ))}
                   </select>
@@ -802,7 +823,7 @@ export default function App() {
                       className="w-full px-2 py-2 border-4 border-black brutal-shadow-sm bg-surface text-on-surface text-[12px] font-bold uppercase tracking-wide"
                       title="Ganti filter (semua foto ikut berubah)"
                     >
-                      {(Object.keys(FILTER_LABELS) as PhotoFilter[]).map((f) => (
+                      {(Object.keys(FILTER_LABELS) as PhotoFilter[]).filter((f) => f !== 'ai-sketch' || aiEnabled).map((f) => (
                         <option key={f} value={f}>{FILTER_LABELS[f]}</option>
                       ))}
                     </select>
