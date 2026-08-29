@@ -11,6 +11,7 @@ import { applyFilter, FILTER_LABELS } from './modules/camera/comicFilter'
 import type { PhotoFilter } from './modules/camera/comicFilter'
 import { queueStrip, syncOutbox, outboxCount } from './modules/offline/outbox'
 import { fetchAiStatus } from './modules/camera/aiSketch'
+import PinGate from './modules/pin/PinGate'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -472,7 +473,8 @@ export default function App() {
     if (!paid || !stripCanvas.current) return
     let active = true
     ;(async () => {
-      const res = await printSmart(stripCanvas.current!, useSession.getState().bridgeUrl)
+      const b = useSession.getState().branding
+      const res = await printSmart(stripCanvas.current!, useSession.getState().bridgeUrl, { paperWidth: b.paperWidth, darkness: b.printDarkness })
       if (active) setMsg(res.message)
       // Log transaksi: method diambil dari paymentMethod store (sudah di-set
       // saat lunas: payQrisSim -> 'qris', confirmCashPaid -> 'cash').
@@ -593,6 +595,7 @@ export default function App() {
 
   return (
     <div className="bg-[#FFE600] text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+      <PinGate />
       {screen === 'attract' ? (
         /* Layar attract — kiosk idle, customer tap untuk mulai */
         <main key="attract" className="relative flex-grow flex flex-col items-center justify-center bg-[#FFE600] px-margin-mobile select-none overflow-hidden animate-[screenIn_.35s_ease-out]">

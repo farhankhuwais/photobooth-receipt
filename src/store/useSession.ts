@@ -33,6 +33,12 @@ export interface BrandingConfig {
   // Jarak antar foto KHUSUS grid 2x2 (px): X = kiri-kanan, Y = atas-bawah.
   photoGap2x2X: number
   photoGap2x2Y: number
+  // Lebar kertas printer: '58mm' (head 384 dot, mis. PP583) | '80mm' (512 dot).
+  // Dipakai buat skala hasil strip sebelum encode ESC/POS.
+  paperWidth: '58mm' | '80mm'
+  // Kegelapan cetak %: 100 = netral, makin besar makin tebal (kontras+ambang
+  // dithering dinaikkan sebelum rasterisasi). Naikin kalau hasil cetak samar.
+  printDarkness: number
 }
 
 export type SessionStatus = 'idle' | 'capturing' | 'done'
@@ -113,6 +119,8 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   photoGap: 20,
   photoGap2x2X: 20,
   photoGap2x2Y: 20,
+  paperWidth: '58mm',
+  printDarkness: 100,
 }
 
 function loadBranding(): BrandingConfig {

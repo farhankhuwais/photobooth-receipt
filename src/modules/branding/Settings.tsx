@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect } from 'react'
 import { TemplateId, useSession, AppMode } from '../../store/useSession'
 import { DesignEditor } from './DesignEditor'
+import { btSupported, btSavedName, btConnected, connectBt, disconnectBt, testPrintBt, autoReconnectBt, btManualOff } from '../escpos/bluetoothPrinter'
+import { usbSupported, usbSavedName, usbConnected, connectUsb, disconnectUsb, testPrintUsb, autoReconnectUsb, usbManualOff } from '../escpos/usbPrinter'
 
 // ── Panel AI Sketch (Gemini) — operator masukkan API key di sini ──────────
 interface AiSettingsView {
@@ -128,6 +130,156 @@ const inputCls = 'w-full border-4 border-black bg-surface-container-lowest px-3 
 const btnPrimary = 'px-3 py-2 border-4 border-black bg-primary-container text-on-primary-container font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-container disabled:opacity-50'
 const btnDanger = 'px-2 py-2 border-4 border-black bg-error-container text-on-error-container font-label-bold uppercase neo-button brutal-shadow-sm'
 const btnGhost = 'px-3 py-2 border-4 border-black bg-surface text-on-surface font-label-bold uppercase neo-button brutal-shadow-sm hover:bg-surface-variant'
+
+// ── Printer Bluetooth (BLE, mis. PP583) — konek & test print ──────────────
+function BtPrinterPanel() {
+  const [connState, setConnState] = useState<'idle' | 'busy' | 'on' | 'off'>(btConnected() ? 'on' : 'off')
+  const [name, setName] = useState(btSavedName())
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  // Sinkron dengan event dari modul BT (auto-reconnect / putus mendadak),
+  // plus coba reconnect senyap saat panel dibuka.
+  useEffect(() => {
+    function sync(e: Event) {
+      const { connected } = (e as CustomEvent).detail || {}
+      setName(btSavedName())
+      setConnState(connected ? 'on' : 'off')
+    }
+    window.addEventListener('pb-bt', sync)
+    if (!btConnected() && !btManualOff()) autoReconnectBt() // tanpa dialog; gagal = diam
+    return () => window.removeEventListener('pb-bt', sync)
+  }, [])
+
+  async function connect() {
+    setBusy(true); setMsg('')
+    try {
+      // Coba reconnect senyap dulu (printer nyala + izin masih ada = tanpa dialog).
+      if (await autoReconnectBt()) {
+        setMsg(`✅ Tersambung ulang ke ${btSavedName()}`)
+        return
+      }
+      const n = await connectBt()
+      setName(n); setConnState('on')
+      setMsg(`✅ Tersambung ke ${n}`)
+    } catch (e) {
+      setConnState('off')
+      setMsg(`❌ ${(e as Error).message}`)
+    } finally { setBusy(false); setTimeout(() => setMsg(''), 5000) }
+  }
+
+  async function testPrint() {
+    setBusy(true); setMsg('')
+    try {
+      const b = useSession.getState().branding
+      const m = await testPrintBt(b.paperWidth, b.printDarkness)
+      setMsg(`🖨️ ${m}`)
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`)
+    } finally { setBusy(false); setTimeout(() => setMsg(''), 6000) }
+  }
+
+  if (!btSupported()) {
+    return (
+      <Panel title="Printer Bluetooth" hint="Browser ini tidak mendukung Web Bluetooth. Pakai Chrome/Edge terbaru (Android/desktop), HTTPS aktif.">
+        <span className="text-[11px] text-on-surface-variant normal-case tracking-normal">Tidak tersedia di browser ini.</span>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel
+      title={`Printer Bluetooth ${connState === 'on' ? '· 🟢' : ''}`}
+      hint="Printer thermal BLE (mis. PP583) langsung dari tablet — tanpa server. Nyalakan printer, pastikan tidak dipakai app lain, lalu klik Sambungkan dan pilih printer di dialog browser."
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={connect} disabled={busy} className={btnPrimary}>{busy && connState !== 'on' ? 'Menyambung…' : connState === 'on' ? 'Ganti Printer' : '🔗 Sambungkan'}</button>
+        {connState === 'on' && (
+          <>
+            <button onClick={testPrint} disabled={busy} className={btnGhost}>🧪 Test Cetak</button>
+            <button onClick={() => { disconnectBt(true) }} disabled={busy} className={btnDanger}>Putus</button>
+          </>
+        )}
+        {connState !== 'on' && btManualOff() && <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">Diputus manual — auto-reconnect nonaktif</span>}
+        {(name || connState === 'on') && <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">{connState === 'on' ? `Terhubung: ${name}` : `Terakhir: ${name}`}</span>}
+      </div>
+      {msg && <span className="text-[11px] normal-case tracking-normal">{msg}</span>}
+    </Panel>
+  )
+}
+
+// ── Printer USB (WebUSB, mis. VSC Q58M) — konek & test print ──────────────
+function UsbPrinterPanel() {
+  const [connState, setConnState] = useState<'on' | 'off'>(usbConnected() ? 'on' : 'off')
+  const [name, setName] = useState(usbSavedName())
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    function sync(e: Event) {
+      const { connected } = (e as CustomEvent).detail || {}
+      setName(usbSavedName())
+      setConnState(connected ? 'on' : 'off')
+    }
+    window.addEventListener('pb-usb', sync)
+    if (!usbConnected() && !usbManualOff()) autoReconnectUsb() // senyap; gagal = diam
+    return () => window.removeEventListener('pb-usb', sync)
+  }, [])
+
+  async function connect() {
+    setBusy(true); setMsg('')
+    try {
+      if (await autoReconnectUsb()) {
+        setMsg(`✅ Tersambung ulang ke ${usbSavedName()}`)
+        return
+      }
+      const n = await connectUsb()
+      setName(n); setConnState('on')
+      setMsg(`✅ Tersambung ke ${n}`)
+    } catch (e) {
+      setConnState('off')
+      setMsg(`❌ ${(e as Error).message}`)
+    } finally { setBusy(false); setTimeout(() => setMsg(''), 5000) }
+  }
+
+  async function testPrint() {
+    setBusy(true); setMsg('')
+    try {
+      const m = await testPrintUsb(useSession.getState().branding.paperWidth, useSession.getState().branding.printDarkness)
+      setMsg(`🖨️ ${m}`)
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`)
+    } finally { setBusy(false); setTimeout(() => setMsg(''), 6000) }
+  }
+
+  if (!usbSupported()) {
+    return (
+      <Panel title="Printer USB" hint="Browser ini tidak mendukung WebUSB. Pakai Chrome/Edge terbaru. Di Android perlu kabel/konektor OTG.">
+        <span className="text-[11px] text-on-surface-variant normal-case tracking-normal">Tidak tersedia di browser ini.</span>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel
+      title={`Printer USB ${connState === 'on' ? '· 🟢' : ''}`}
+      hint="Printer thermal USB (mis. VSC Q58M) langsung dari tablet/laptop — tanpa server. Colok via OTG (Android) atau USB langsung, klik Sambungkan lalu pilih printer di dialog browser."
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={connect} disabled={busy} className={btnPrimary}>{connState === 'on' ? 'Ganti Printer' : '🔗 Sambungkan'}</button>
+        {connState === 'on' && (
+          <>
+            <button onClick={testPrint} disabled={busy} className={btnGhost}>🧪 Test Cetak</button>
+            <button onClick={() => { disconnectUsb(true) }} disabled={busy} className={btnDanger}>Putus</button>
+          </>
+        )}
+        {connState !== 'on' && usbManualOff() && <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">Diputus manual — auto-reconnect nonaktif</span>}
+        {(name || connState === 'on') && <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">{connState === 'on' ? `Terhubung: ${name}` : `Terakhir: ${name}`}</span>}
+      </div>
+      {msg && <span className="text-[11px] normal-case tracking-normal">{msg}</span>}
+    </Panel>
+  )
+}
 
 export function Settings({ onClose, onAttractChange }: { onClose: () => void; onAttractChange?: () => void }) {
   const { branding, bridgeUrl, frames, mode, price, setBranding, setBridgeUrl, setMode, setPrice, applyConfig } = useSession()
@@ -548,6 +700,42 @@ export function Settings({ onClose, onAttractChange }: { onClose: () => void; on
 
             {activeTab === 'print' && (
               <>
+                <BtPrinterPanel />
+
+                <UsbPrinterPanel />
+
+                <Panel title="Lebar Kertas" hint="PP583/mini portable = 58mm. Printer thermal besar = 80mm. Hasil cetak otomatis diskalakan ke lebar head printer.">
+                  <div className="flex gap-2">
+                    {(['58mm', '80mm'] as const).map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => setBranding({ paperWidth: w })}
+                        className={`px-4 py-2 border-4 border-black font-label-bold uppercase neo-button brutal-shadow-sm ${branding.paperWidth === w ? 'bg-primary-container text-on-primary-container' : 'bg-surface text-on-surface hover:bg-surface-variant'}`}
+                      >
+                        {w}{branding.paperWidth === w ? ' ✓' : ''}
+                      </button>
+                    ))}
+                  </div>
+                </Panel>
+
+                <Panel title="Kegelapan Cetak (%)" hint="Hasil samar/tipis → naikkan (130–160). Makin tinggi makin tebal tapi foto bisa kebanyakan titik hitam.">
+                  <label className="flex flex-col gap-1 normal-case tracking-normal">
+                    <span className="flex items-center justify-between text-[11px]">
+                      <span>Kegelapan</span>
+                      <span className="font-bold">{branding.printDarkness ?? 100}%</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={100}
+                      max={200}
+                      step={5}
+                      value={branding.printDarkness ?? 100}
+                      onChange={(e) => setBranding({ printDarkness: Number(e.target.value) })}
+                      className="w-full accent-black"
+                    />
+                  </label>
+                </Panel>
+
                 <Panel title="Jarak Dekorasi Foto (px)" hint="Foto dipisah dari logo/QR & antar foto agar bisa dihias.">
                   {([
                     ['photoTopPad', 'Atas (vs logo)', branding.photoTopPad ?? 24],

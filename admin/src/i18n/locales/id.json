@@ -1,0 +1,33 @@
+{
+  "app": {
+    "title": "Admin Dashboard",
+    "subtitle": "Dasbor Administrasi Achipix"
+  },
+  "login": {
+    "email": "Email",
+    "password": "Password",
+    "submit": "Masuk",
+    "error": "Login gagal"
+  },
+  "nav": {
+    "overview": "Overview",
+    "tenants": "Tenants",
+    "users": "Users",
+    "photos": "Photos",
+    "frames": "Frames",
+    "designs": "Designs",
+    "ai": "AI Settings",
+    "audit": "Audit Log",
+    "billing": "Billing",
+    "settings": "Settings"
+  },
+  "common": {
+    "save": "Simpan",
+    "cancel": "Batal",
+    "delete": "Hapus",
+    "edit": "Edit",
+    "add": "Tambah",
+    "search": "Cari",
+    "status": "Status"
+  }
+}
