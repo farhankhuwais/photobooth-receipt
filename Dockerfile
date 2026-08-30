@@ -29,8 +29,7 @@ RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist
 COPY serve.mjs db.mjs admin-api.mjs ./
 COPY src/lib/licenseUtil.js ./src/lib/licenseUtil.js
-COPY src/lib/licenseSecret.mjs ./src/lib/licenseSecret.mjs
-# License secret persistence: generated on first run, stored on host
+# License secret persisted via /data volume (no file COPY needed)
 VOLUME ["/data"]
 EXPOSE 8080
 CMD ["node", "serve.mjs"]

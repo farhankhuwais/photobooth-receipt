@@ -17,7 +17,10 @@ import { fileURLToPath } from 'node:url'
 import fs from 'node:fs/promises'
 import { initDb, savePhoto, getPhoto, listPhotos, deletePhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign, DEFAULT_TENANT, resolveTenant, pool, checkTierLimit } from './db.mjs'
 import { adminApi } from './admin-api.mjs'
-import { loadLicenseSecret } from './src/lib/licenseSecret.mjs'
+// NOTE: License secret is versioned and stored in the database.
+// The process.env.LICENSE_SECRET_KEY env is the source of truth.
+// Admin-api.mjs handles secret versioning (DB lookup per code's secret_version).
+// License codes are verified via admin-api.mjs routes (not inline in serve.mjs).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST = path.join(__dirname, 'dist')
@@ -823,23 +826,12 @@ app.use((_req, res) => res.sendFile(path.join(DIST, 'index.html')))
 
 const PORT = Number(process.env.PORT || 8080)
 
-// Load / persist license secret before starting the server
-let licenseSecret = process.env.LICENSE_SECRET_KEY || ''
-loadLicenseSecret().then((secret) => {
-  licenseSecret = secret
-  process.env.LICENSE_SECRET_KEY = secret
-})
-
-app.listen(PORT, '0.0.0.0', async () => {
-  // Wait for license secret to be resolved
-  if (!licenseSecret) {
-    licenseSecret = await loadLicenseSecret()
-    process.env.LICENSE_SECRET_KEY = licenseSecret
-  }
+app.listen(PORT, '0.0.0.0', () => {
+  const secretSet = !!(process.env.LICENSE_SECRET_KEY)
   console.log(`photobooth combined server on :${PORT}`)
   console.log(`  frontend : /`)
   console.log(`  api      : /api/upload, /api/print, /api/presets, /api/config, /api/frames`)
-  console.log(`  storage  : Postgres (db=photobooth)`)
-  console.log(`  printer  : ${PRINT_ENABLED ? PRINTER_PATH + ' @' + PRINTER_BAUD : 'disabled (set PRINT_ENABLED=1 & PRINTER_PATH to enable)'}`)
-  console.log(`  license  : ${licenseSecret ? '(secret loaded)' : '(warning: no secret)'}`)
+  console.log(`  storage  : Postgres (db=${process.env.PG_DATABASE || 'photobooth'})`)
+  console.log(`  printer  : ${process.env.PRINT_ENABLED === '1' ? 'enabled' : 'disabled'} (set PRINT_ENABLED=1 & PRINTER_PATH to enable)`)
+  console.log(`  license  : ${secretSet ? '(secret loaded)' : '(warning: no secret)'}`)
 })
