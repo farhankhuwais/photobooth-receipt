@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Box, Paper, Typography, Alert, IconButton, MenuItem, TextField, Button,
   Dialog, DialogTitle, DialogContent, DialogActions, Snackbar, Table,
-  TableBody, TableCell, TableContainer, TableHead, TableRow,
+  TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip,
 } from '@mui/material'
 import DeleteIcon from '@mui/icons-material/Delete'
 import VisibilityIcon from '@mui/icons-material/Visibility'
+import EditIcon from '@mui/icons-material/Edit'
+import AddIcon from '@mui/icons-material/Add'
+import DesignEditor from '@/components/DesignEditor'
 import { api } from '@/api/client'
 
 interface Design {
@@ -29,6 +32,19 @@ export default function Designs() {
   const [tenantFilter, setTenantFilter] = useState('')
   const [preview, setPreview] = useState<Design | null>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editorKey, setEditorKey] = useState(0) // remount editor on open
+  const [editorSelId, setEditorSelId] = useState<string>('')
+
+  const loadDesignIntoEditor = (id: string) => {
+    setEditorSelId(id)
+    setEditorKey(k => k + 1)
+  }
+
+  const openNewEditor = () => {
+    setEditorSelId('')
+    setEditorKey(k => k + 1)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -95,6 +111,10 @@ export default function Designs() {
             ))}
           </TextField>
           <Button variant="outlined" onClick={load}>Refresh</Button>
+          <Button variant="contained" color="primary" startIcon={<AddIcon />}
+            onClick={() => { setEditorOpen(true); openNewEditor(); }} disabled={!tenantFilter}>
+            Buat Design
+          </Button>
         </Box>
       </Box>
 
@@ -145,6 +165,11 @@ export default function Designs() {
                 <TableCell>{d.hasFrame ? '✓' : '—'}</TableCell>
                 <TableCell>{new Date(d.created_at).toLocaleString('id-ID')}</TableCell>
                 <TableCell align="right">
+                  <Tooltip title="Edit design mockup">
+                    <span>
+                      <IconButton onClick={() => { setEditorOpen(true); loadDesignIntoEditor(d.id) }} disabled={!tenantFilter}><EditIcon /></IconButton>
+                    </span>
+                  </Tooltip>
                   <IconButton onClick={() => openPreview(d)}><VisibilityIcon /></IconButton>
                   <IconButton color="error" onClick={() => handleDelete(d)}><DeleteIcon /></IconButton>
                 </TableCell>
@@ -200,6 +225,27 @@ export default function Designs() {
       </Dialog>
 
       <Snackbar open={!!snack} autoHideDuration={3000} onClose={() => setSnack('')} message={snack} />
+
+      {/* Editor Design Mockup */}
+      <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} fullWidth maxWidth="md">
+        <DialogTitle>
+          {editorSelId ? 'Edit Design Mockup' : 'Buat Design Mockup'}
+          <Typography variant="caption" display="block" color="text.secondary">
+            Tenant: {tenantFilter || '(pilih tenant dulu)'}
+          </Typography>
+        </DialogTitle>
+        <DialogContent dividers>
+          <DesignEditor
+            key={editorKey}
+            tenantSlug={tenantFilter}
+            initialDesignId={editorSelId}
+            onSaved={() => { load(); }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditorOpen(false)}>Tutup</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

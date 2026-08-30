@@ -675,7 +675,7 @@ export async function saveDesign(id, name, frameBuf, canvasW, canvasH, slots, te
   await pool.query(
     `INSERT INTO designs (tenant_id, id, name, frame_data, canvas_w, canvas_h, slots, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-     ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, frame_data = EXCLUDED.frame_data,
+     ON CONFLICT (tenant_id, id) DO UPDATE SET name = EXCLUDED.name, frame_data = EXCLUDED.frame_data,
        canvas_w = EXCLUDED.canvas_w, canvas_h = EXCLUDED.canvas_h, slots = EXCLUDED.slots`,
     [tenantId, id, name, frameBuf, canvasW, canvasH, JSON.stringify(slots)]
   )

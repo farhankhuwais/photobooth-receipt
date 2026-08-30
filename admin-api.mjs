@@ -13,7 +13,7 @@ import {
   recentFailedLogins, logAudit, listAudit, listTenantsWithStats, createTenant,
   updateTenant, deleteTenant, listUsers, createUser, updateUser, deleteUser,
   getUserById, setLastLogin, getGlobalOverview, listPhotos, deletePhoto,
-  listFrames, listDesigns, getDesign, deleteDesign,
+  listFrames, listDesigns, getDesign, deleteDesign, saveDesign, updateDesign,
   getConfig, saveConfig, listPresets, getPreset, savePreset, deletePreset,
   getAttract, saveAttract, deleteAttract, getAttractIcon, saveAttractIcon, deleteAttractIcon,
   listTiers, getTier, createTier, updateTier, deleteTier,
@@ -753,6 +753,42 @@ export function adminApi() {
     } catch (e) {
       res.status(500).json({ error: String(e) })
     }
+  })
+
+  // POST /designs (multipart: image=frame, name, slots, canvas_w, canvas_h, tenantSlug)
+  r.post('/designs', requireSession, requireRole('super_admin', 'tenant_admin'), requireCsrf, upload.single('image'), async (req, res) => {
+    const tenantSlug = req.user.role === 'super_admin' ? (req.body?.tenantSlug || req.query.tenantSlug) : req.user.tenant_id
+    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
+    const tierCheck = await checkTierLimit(req.user.id, tenantSlug, 'designs')
+    if (!tierCheck.ok) return res.status(403).json({ error: tierCheck.error })
+    const id = crypto.randomUUID()
+    const name = req.body?.name || `design-${Date.now()}`
+    let slots = []
+    try { slots = JSON.parse(req.body?.slots || '[]') } catch { slots = [] }
+    const cw = Number(req.body?.canvas_w) || 308
+    const ch = Number(req.body?.canvas_h) || 454
+    await saveDesign(id, name, req.file ? req.file.buffer : null, cw, ch, slots, tenantSlug)
+    await logAudit({ userId: req.user.id, action: 'design_create', target: id, ip: clientIp(req) })
+    res.json({ id, name })
+  })
+
+  // PUT /designs/:id (update slots, frame, name; partial allowed)
+  r.put('/designs/:id', requireSession, requireRole('super_admin', 'tenant_admin'), requireCsrf, upload.single('image'), async (req, res) => {
+    const tenantSlug = req.user.role === 'super_admin' ? (req.body?.tenantSlug || req.query.tenantSlug) : req.user.tenant_id
+    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
+    let slots
+    try { slots = req.body?.slots ? JSON.parse(req.body.slots) : undefined } catch { slots = undefined }
+    const canvasW = req.body?.canvas_w ? Number(req.body.canvas_w) : undefined
+    const canvasH = req.body?.canvas_h ? Number(req.body.canvas_h) : undefined
+    await updateDesign(req.params.id, {
+      name: req.body?.name,
+      frameBuf: req.file ? req.file.buffer : undefined,
+      slots,
+      canvasW,
+      canvasH,
+    }, tenantSlug)
+    await logAudit({ userId: req.user.id, action: 'design_update', target: req.params.id, ip: clientIp(req) })
+    res.json({ ok: true })
   })
 
   // POST /attract/:mode (background upload) — multipart/form-data 'media'
