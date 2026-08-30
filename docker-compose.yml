@@ -1,6 +1,15 @@
 services:
   photobooth:
-    build: .
+    build:
+      context: .
+      args:
+        # Secret used to build Vite frontend bundle (for offline HMAC validation).
+        # MUST match LICENSE_SECRET_KEY below.
+        # Set via host env: export VITE_LICENSE_SECRET=$(cat .license_secret)
+        VITE_LICENSE_SECRET: ${VITE_LICENSE_SECRET:?Set VITE_LICENSE_SECRET env var before docker compose up (64-char hex)}
+        # Set to 1 to enforce license activation gate (only for dedicated vendor builds).
+        # Leave empty/0 for self-host deployment to keep live tenants working.
+        VITE_LICENSE_ENFORCE: ${VITE_LICENSE_ENFORCE:-0}
     container_name: photobooth
     restart: unless-stopped
     ports:
@@ -15,6 +24,11 @@ services:
       PGPORT: "5432"
       PGUSER: photobooth
       PGDATABASE: photobooth
+      # License secret: must match VITE_LICENSE_SECRET above. Used to:
+      #   - generate HMAC-signed codes via /api/admin/license/generate
+      #   - verify redeem + revoke via /api/admin/license/redeem + /verify
+      # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      LICENSE_SECRET_KEY: ${LICENSE_SECRET_KEY:?Set LICENSE_SECRET_KEY env var (64-char hex, must match VITE_LICENSE_SECRET)}
       # password dibaca dari file ter-mount di bawah (db.mjs: /tmp/photobooth_pg_pw.txt)
     volumes:
       - /tmp/photobooth_pg_pw.txt:/tmp/photobooth_pg_pw.txt:ro

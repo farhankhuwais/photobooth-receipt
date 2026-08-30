@@ -283,6 +283,48 @@ export async function initDb() {
   await pool.query(`CREATE INDEX IF NOT EXISTS admin_user_code_idx ON admin_user (code)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS admin_user_tier_idx ON admin_user (pricing_tier_id)`)
 
+  // License codes: track issued/redeemed/revoked HMAC codes for audit & revocation.
+  // Note: the actual code string is NOT stored in DB — HMAC contains all validity data.
+  // DB only stores hash for fast revocation lookups and audit trail.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS license_codes (
+      id               SERIAL PRIMARY KEY,
+      code_hash        TEXT NOT NULL UNIQUE,   -- SHA256 of full code string
+      vendor_id        TEXT NOT NULL,
+      tier_slug        TEXT NULL,             -- pricing tier to assign on redemption
+      expires_at       TIMESTAMPTZ NOT NULL,
+      issued_by        INTEGER NULL REFERENCES admin_user(id),
+      issued_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      redeemed_at      TIMESTAMPTZ NULL,
+      redeemed_by      TEXT NULL,             -- user email created on redemption
+      redeemed_tenant  TEXT NULL,             -- tenant slug created on redemption
+      revoked_at       TIMESTAMPTZ NULL,
+      revoked_by      INTEGER NULL REFERENCES admin_user(id),
+      active           BOOLEAN NOT NULL DEFAULT true,
+      secret_version   INTEGER NOT NULL DEFAULT 1  -- which secret version was used to sign
+    )
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS license_codes_code_hash_idx ON license_codes(code_hash)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS license_codes_vendor_id_idx ON license_codes(vendor_id)`)
+
+  // ── License secrets: versioned so rotation doesn't break existing codes ───
+  // Each code is signed with the current secret_version; on verify, we look up
+  // the secret for that specific version. Old secrets stay in the table for
+  // redemption of previously-issued codes. Set "current=false" on prior rows
+  // when rotating (so we know which one is "active" for new issues).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS license_secrets (
+      id            SERIAL PRIMARY KEY,
+      version       INTEGER NOT NULL UNIQUE,
+      secret        TEXT NOT NULL,            -- plaintext (HMAC needs raw key)
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      rotated_by    INTEGER NULL REFERENCES admin_user(id),
+      rotated_from  INTEGER NULL,             -- previous version (for audit)
+      is_current    BOOLEAN NOT NULL DEFAULT false
+    )
+  `)
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS license_secrets_current_idx ON license_secrets (is_current) WHERE is_current = true`)
+
   // Seed default tiers jika tabel kosong.
   const tierCount = await pool.query('SELECT COUNT(*)::int AS c FROM pricing_tiers')
   if (tierCount.rows[0].c === 0) {
@@ -364,6 +406,22 @@ export async function migrate() {
       END IF;
     END $$;
   `)
+
+  // License secret versioning migrations (idempotent)
+  await pool.query(`
+    ALTER TABLE license_codes ADD COLUMN IF NOT EXISTS secret_version INTEGER NOT NULL DEFAULT 1
+  `)
+  // Seed version 1 secret from the current LICENSE_SECRET_KEY env (if provided),
+  // else generate a fresh random one. Passed as named param to avoid SQL injection.
+  const envSecret = process.env.LICENSE_SECRET_KEY || null
+  const seedSecret = envSecret || `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  await pool.query(`
+    INSERT INTO license_secrets (version, secret, is_current)
+    VALUES (1, $1, true)
+    ON CONFLICT (version) DO NOTHING
+  `, [seedSecret])
+  await pool.query(`CREATE INDEX IF NOT EXISTS license_codes_secret_version_idx ON license_codes(secret_version)`)
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS license_secrets_current_idx ON license_secrets (is_current) WHERE is_current = true`)
 }
 
 export async function verifyAdmin(email, password) {
@@ -897,6 +955,13 @@ export async function getUserById(id) {
   return r.rows[0] || null
 }
 
+// Find user by email (case-insensitive)
+export async function findUserByEmail(email) {
+  const r = await pool.query(
+    `SELECT id, email, role, tenant_id, active FROM admin_user WHERE LOWER(email) = LOWER($1)`, [String(email).trim()])
+  return r.rows[0] || null
+}
+
 export async function setLastLogin(id) {
   await pool.query('UPDATE admin_user SET last_login_at = now() WHERE id = $1', [id])
 }
@@ -1025,6 +1090,140 @@ export async function checkTierLimit(userIdForAuth, tenantSlug, resource) {
     return { ok: false, error: `Batas tier tercapai: ${resource} sudah ${current}/${max}. Upgrade tier untuk menambah.` }
   }
   return { ok: true, current, max }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// License Codes — track issued/redeemed/revoked HMAC codes
+// ════════════════════════════════════════════════════════════════════════════════
+
+import { createHash } from 'node:crypto'
+
+function hashLicenseCode(code) {
+  return createHash('sha256').update(String(code)).digest('hex')
+}
+
+// Record a newly issued license code
+export async function recordLicenseCode({ code, vendorId, tierSlug, expiresAt, issuedBy, secretVersion = 1 }) {
+  const codeHash = hashLicenseCode(code)
+  const r = await pool.query(`
+    INSERT INTO license_codes (code_hash, vendor_id, tier_slug, expires_at, issued_by, secret_version)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (code_hash) DO NOTHING
+    RETURNING id, code_hash, vendor_id, tier_slug, expires_at, issued_at
+  `, [codeHash, vendorId, tierSlug || null, expiresAt, issuedBy || null, secretVersion])
+  return r.rows[0] || null
+}
+
+// Look up code by hash (for revocation check during /verify)
+export async function getLicenseByHash(code) {
+  const codeHash = hashLicenseCode(code)
+  const r = await pool.query(`
+    SELECT id, code_hash, vendor_id, tier_slug, expires_at,
+           redeemed_at, redeemed_by, redeemed_tenant, revoked_at, active,
+           secret_version
+    FROM license_codes
+    WHERE code_hash = $1
+  `, [codeHash])
+  return r.rows[0] || null
+}
+
+// List codes (for admin UI)
+export async function listLicenseCodes({ limit = 100, offset = 0, vendorId = null } = {}) {
+  const params = []
+  let where = ''
+  if (vendorId) {
+    params.push(vendorId)
+    where = `WHERE lc.vendor_id = $${params.length}`
+  }
+  params.push(limit, offset)
+  const limitIdx = params.length - 1
+  const offsetIdx = params.length
+  const r = await pool.query(`
+    SELECT lc.id, lc.code_hash, lc.vendor_id, lc.tier_slug, lc.expires_at,
+           lc.issued_at, lc.issued_by, u1.email AS issued_by_email,
+           lc.redeemed_at, lc.redeemed_by, lc.redeemed_tenant,
+           lc.revoked_at, lc.revoked_by, u2.email AS revoked_by_email, lc.active,
+           COUNT(*) OVER() AS total_count
+    FROM license_codes lc
+    LEFT JOIN admin_user u1 ON u1.id = lc.issued_by
+    LEFT JOIN admin_user u2 ON u2.id = lc.revoked_by
+    ${where}
+    ORDER BY lc.issued_at DESC
+    LIMIT $${limitIdx} OFFSET $${offsetIdx}
+  `, params)
+  const total = r.rows.length > 0 ? Number(r.rows[0].total_count) : 0
+  return { items: r.rows, total }
+}
+
+// Revoke a license code (admin action)
+export async function revokeLicenseCode(codeId, revokedBy) {
+  const r = await pool.query(`
+    UPDATE license_codes
+    SET active = false, revoked_at = now(), revoked_by = $2
+    WHERE id = $1 AND active = true
+    RETURNING id
+  `, [codeId, revokedBy || null])
+  return r.rows[0] || null
+}
+
+// Mark code as redeemed (called after successful user+tenant creation)
+export async function markLicenseRedeemed({ code, userEmail, tenantSlug }) {
+  const codeHash = hashLicenseCode(code)
+  const r = await pool.query(`
+    UPDATE license_codes
+    SET active = false, redeemed_at = now(),
+        redeemed_by = $2, redeemed_tenant = $3
+    WHERE code_hash = $1 AND active = true
+    RETURNING id
+  `, [codeHash, userEmail, tenantSlug])
+  return r.rows[0] || null
+}
+
+export async function getSecretByVersion(version) {
+  const r = await pool.query('SELECT version, secret, created_at, is_current FROM license_secrets WHERE version = $1', [version])
+  return r.rows[0] || null
+}
+
+export async function getCurrentSecret() {
+  const r = await pool.query('SELECT version, secret, created_at, is_current FROM license_secrets WHERE is_current = true')
+  return r.rows[0] || null
+}
+
+export async function listSecretVersions() {
+  const r = await pool.query(`
+    SELECT s.version, s.created_at, s.rotated_by, s.rotated_from, s.is_current,
+           u.email AS rotated_by_email
+    FROM license_secrets s
+    LEFT JOIN admin_user u ON u.id = s.rotated_by
+    ORDER BY s.version DESC
+  `)
+  return r.rows
+}
+
+// Rotate: mark current secret as non-current, insert new secret as current.
+// Returns new version number. Does NOT delete old secrets (needed for verify old codes).
+export async function rotateSecret(newSecret, rotatedBy) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    // Mark current as non-current
+    await client.query('UPDATE license_secrets SET is_current = false WHERE is_current = true')
+    // Get previous version
+    const { rows: prev } = await client.query('SELECT MAX(version) AS mv FROM license_secrets')
+    const prevVersion = prev[0]?.mv || 1
+    // Insert new current
+    const { rows } = await client.query(
+      'INSERT INTO license_secrets (version, secret, rotated_by, rotated_from, is_current) VALUES ($1, $2, $3, $4, true) RETURNING version',
+      [prevVersion + 1, newSecret, rotatedBy, prevVersion]
+    )
+    await client.query('COMMIT')
+    return rows[0].version
+  } catch (e) {
+    await client.query('ROLLBACK')
+    throw e
+  } finally {
+    client.release()
+  }
 }
 
 export default pool

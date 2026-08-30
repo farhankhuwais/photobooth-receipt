@@ -7,6 +7,7 @@
 import { Router, json as expressJsonRaw } from 'express'
 import crypto from 'node:crypto'
 import multer from 'multer'
+import { generateLicenseCode, verifyLicenseCode } from './src/lib/licenseUtil.js'
 import {
   verifyAdmin, createSession, destroySession, getSessionUser, recordLoginAttempt,
   recentFailedLogins, logAudit, listAudit, listTenantsWithStats, createTenant,
@@ -18,6 +19,9 @@ import {
   listTiers, getTier, createTier, updateTier, deleteTier,
   generateUserCode, assignUserCode, setUserTier, checkTierLimit, getUserTierLimit, getTenantUsage,
   countTenantsByOwner, listTenantsByOwner, isTenantOwner,
+  recordLicenseCode, getLicenseByHash, listLicenseCodes, revokeLicenseCode, markLicenseRedeemed,
+  getCurrentSecret, getSecretByVersion, listSecretVersions, rotateSecret,
+  findUserByEmail,
   pool,
 } from './db.mjs'
 
@@ -305,6 +309,232 @@ export function adminApi() {
     await deleteUser(Number(req.params.id))
     await logAudit({ userId: req.user.id, action: 'user_delete', target: String(req.params.id), ip: clientIp(req) })
     res.json({ ok: true })
+  })
+
+  // ── License Code (HMAC-signed, offline-valid, versioned secrets) ─────────────────
+  // Generate: POST /api/admin/license/generate
+  //   Body: { vendorId, expiryDays, tierSlug? }
+  //   Returns: { code, vendorId, expiryDays }
+  //   Code format: vendorId-expiryTimestamp-hmacSha256
+  r.post('/license/generate', requireSession, requireRole('super_admin'), requireCsrf, expressJson(), async (req, res) => {
+    const { vendorId, expiryDays } = req.body || {}
+    if (!vendorId || !expiryDays) return res.status(400).json({ error: 'vendorId dan expiryDays wajib' })
+    if (typeof expiryDays !== 'number' || expiryDays <= 0) return res.status(400).json({ error: 'expiryDays harus angka positif' })
+
+    // Get current active secret (versioned, from DB or env)
+    let currentSecret = process.env.LICENSE_SECRET_KEY || null
+    let secretVersion = 1
+    try {
+      const rec = await getCurrentSecret()
+      if (rec) { currentSecret = rec.secret; secretVersion = rec.version }
+    } catch { /* fallback to env */ }
+
+    if (!currentSecret) {
+      return res.status(500).json({ error: 'License secret belum dikonfigurasi. Set LICENSE_SECRET_KEY di environment.' })
+    }
+
+    const code = generateLicenseCode(vendorId, expiryDays, currentSecret)
+    const expiresAt = new Date(Date.now() + expiryDays * 86400000)
+    // Record issued code in DB (hash only) for audit + revocation tracking.
+    // secret_version is stored so we can verify codes signed with older secrets.
+    await recordLicenseCode({ code, vendorId, tierSlug: req.body.tierSlug || null, expiresAt, issuedBy: req.user.id, secretVersion }).catch(() => { })
+    await logAudit({ userId: req.user.id, action: 'license_generate', target: vendorId, ip: clientIp(req) })
+    res.json({ code, vendorId, expiryDays, secretVersion })
+  })
+
+  // List issued codes for admin UI
+  //   GET /api/admin/license/list?limit=20&offset=0&vendor_id=...
+  r.get('/license/list', requireSession, requireRole('super_admin'), async (req, res) => {
+    const { items, total } = await listLicenseCodes({
+      limit: Math.min(Number(req.query.limit) || 20, 200),
+      offset: Number(req.query.offset) || 0,
+      vendorId: req.query.vendor_id || null,
+    })
+    res.json({ items, total })
+  })
+
+  // Revoke a license (admin can revoke before expiry)
+  //   POST /api/admin/license/:id/revoke
+  r.post('/license/:id/revoke', requireSession, requireRole('super_admin'), requireCsrf, async (req, res) => {
+    const revoked = await revokeLicenseCode(Number(req.params.id), req.user.id)
+    if (!revoked) return res.status(404).json({ error: 'Kode tidak ditemukan atau sudah nonaktif' })
+    await logAudit({ userId: req.user.id, action: 'license_revoke', target: String(req.params.id), ip: clientIp(req) })
+    res.json({ ok: true, id: revoked.id })
+  })
+
+  // ── Simple in-memory rate limiter for unauthenticated endpoints ────────────
+  const redeemRateMap = new Map()
+  function checkRateLimit(ip, key = 'redeem', limit = 5, windowMs = 60000) {
+    const now = Date.now()
+    const entry = redeemRateMap.get(ip) || { count: 0, resetAt: now + windowMs }
+    if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + windowMs }
+    entry.count++
+    redeemRateMap.set(ip, entry)
+    return entry.count <= limit
+  }
+
+  // Redeem a license (vendor enters code on booth tablet)
+  //   POST /api/admin/license/redeem
+  //   Body: { code, deviceFingerprint }
+  //   Unauthenticated — no session required (vendor has no account yet).
+  //   Rate-limited: 5 attempts/minute per IP.
+  //   Validates HMAC + expiry + not-revoked, then:
+  //     - creates a tenant (1 user = 1 tenant)
+  //     - creates a tenant_admin user bound to that tenant
+  //   Returns { valid, vendorId, license: { vendorId, expiry, deviceFingerprint } }
+  r.post('/license/redeem', expressJson(), async (req, res) => {
+    const ip = clientIp(req)
+    if (!checkRateLimit(ip)) {
+      return res.status(429).json({ valid: false, error: 'Terlalu banyak percobaan. Coba lagi dalam 1 menit.' })
+    }
+    const { code, deviceFingerprint } = req.body || {}
+    if (!code) return res.status(400).json({ error: 'code wajib' })
+    if (!deviceFingerprint) return res.status(400).json({ error: 'deviceFingerprint wajib untuk binding' })
+
+    // 2. Check revocation status first (need DB record to know secret version)
+    const dbRec = await getLicenseByHash(code)
+
+    // Resolve signing secret: prefer the version stored in DB record,
+    // fallback to current secret (for codes issued before versioning existed).
+    let secret
+    let secretVersion = 1
+    if (dbRec) {
+      secretVersion = dbRec.secret_version || 1
+      const rec = await getSecretByVersion(secretVersion).catch(() => null)
+      if (rec) secret = rec.secret
+    }
+    if (!secret) secret = process.env.LICENSE_SECRET_KEY || null
+    if (!secret) return res.status(500).json({ valid: false, error: 'License secret belum dikonfigurasi' })
+
+    // 1. Verify HMAC + expiry (server-side, authoritative)
+    const result = verifyLicenseCode(code, secret)
+    if (!result.valid) return res.status(400).json(result)
+
+    if (dbRec && !dbRec.active) {
+      return res.status(403).json({ valid: false, error: 'Kode telah dicabut/dipakai' })
+    }
+    // Code not in DB = never officially issued via admin → suspicious
+    if (!dbRec) {
+      // Allow only if HMAC valid (codes are singleton per issue). Warn in audit.
+      await logAudit({ userId: req.user?.id ?? null, action: 'license_redeem_unknown_code', target: result.vendorId, ip: clientIp(req) })
+    }
+
+    // 3. Create tenant + tenant_admin user (idempotent-ish: reuse if exists)
+    const { vendorId, expiry } = result
+
+    // Tenant slug based on vendor vend (slugified, ensure unique)
+    const baseSlug = vendorId.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'vendor'
+    let tenantSlug = baseSlug
+    try {
+      let n = 2
+      while (true) {
+        const exists = await pool.query('SELECT 1 FROM tenants WHERE slug = $1', [tenantSlug])
+        if (!exists.rows[0]) break
+        tenantSlug = `${baseSlug}-${n++}`
+      }
+
+      // Create tenant
+      const actorId = req.user?.id ?? null
+      await createTenant({ slug: tenantSlug, name: `Tenant ${vendorId}`, accessPin: null, ownerUserId: null })
+      await logAudit({ userId: actorId, action: 'tenant_create', target: tenantSlug, ip: clientIp(req) })
+
+      // Create tenant_admin user bound to this tenant
+      const userEmail = `${tenantSlug}@achipix.local`
+      let user = await findUserByEmail(userEmail)
+      if (!user) {
+        // Use createUser helper (accepts role+tenant). Password is a random 12-char
+        // default — vendor must reset it via admin. Assign tier if tierSlug given.
+        try {
+          const tierRec = dbRec && dbRec.tier_slug
+            ? (await pool.query('SELECT id, slug FROM pricing_tiers WHERE slug = $1 AND active = true', [dbRec.tier_slug])).rows[0]
+            : null
+          user = await createUser({
+            email: userEmail, name: vendorId, role: 'tenant_admin',
+            tenantId: tenantSlug, active: true,
+            password: crypto.randomBytes(6).toString('hex'),   // random default
+            pricingTierId: tierRec ? tierRec.id : null,
+          })
+        } catch (err) {
+          console.error('[redeem] createUser failed:', err.message)
+          user = null
+        }
+      }
+
+      // Mark code redeemed
+      await markLicenseRedeemed({ code, userEmail, tenantSlug })
+      await logAudit({ userId: actorId, action: 'license_redeem', target: tenantSlug, ip: clientIp(req) })
+
+      res.json({
+        valid: true,
+        vendorId,
+        expiry,
+        tenant: { slug: tenantSlug },
+        license: { vendorId, expiry, deviceFingerprint },
+      })
+    } catch (err) {
+      res.status(500).json({ valid: false, error: `Gagal provision tenant: ${err.message}` })
+    }
+  })
+
+  // Verify: POST /api/admin/license/verify
+  //   Body: { code }
+  //   Returns: { valid, vendorId, expiry, error? }
+  //   Used by booth app to validate codes fetched from server or stored locally
+  r.post('/license/verify', requireSession, async (req, res) => {
+    const { code } = req.body || {}
+    if (!code) return res.status(400).json({ error: 'code wajib' })
+
+    // Resolve signing secret by version (DB record), fallback to current/env
+    const dbRec = await getLicenseByHash(code).catch(() => null)
+    let secret
+    if (dbRec) {
+      const rec = await getSecretByVersion(dbRec.secret_version || 1).catch(() => null)
+      if (rec) secret = rec.secret
+    }
+    if (!secret) secret = process.env.LICENSE_SECRET_KEY || null
+    if (!secret) return res.status(500).json({ valid: false, error: 'License secret belum dikonfigurasi' })
+
+    const result = verifyLicenseCode(code, secret)
+    // Add revocation check
+    if (result.valid) {
+      if (dbRec && !dbRec.active) {
+        return res.json({ valid: false, vendorId: result.vendorId, expiry: result.expiry, error: 'Kode telah dicabut/dipakai' })
+      }
+    }
+    res.json(result)
+  })
+
+  // List secret versions: GET /api/admin/license/secrets
+  //   super_admin only. Returns current + historical versions (for audit).
+  r.get('/license/secrets', requireSession, requireRole('super_admin'), async (req, res) => {
+    const versions = await listSecretVersions()
+    res.json({ versions })
+  })
+
+  // Rotate license secret: POST /api/admin/license/secret/rotate
+  //   Body: { confirmPassword } — operator must re-auth to rotate (sensitive op)
+  //   super_admin only. Old secrets stay valid for previously issued codes
+  //   (versioned HMAC), so rotation does NOT break existing licenses.
+  //   NOTE: the booth frontend bundle was built with the OLD secret baked in —
+  //   offline validation will use the old secret version. We only rotate the
+  //   SERVER-side signing secret, so new codes are signed with the new version.
+  //   To also update the frontend bundle, rebuild with VITE_LICENSE_SECRET=<new>.
+  r.post('/license/secret/rotate', requireSession, requireRole('super_admin'), requireCsrf, expressJson(), async (req, res) => {
+    const { confirmPassword } = req.body || {}
+    if (!confirmPassword) return res.status(400).json({ error: 'confirmPassword wajib untuk rotasi secret' })
+
+    // Re-auth: user must confirm their own password
+    const authed = await verifyAdmin(req.user.email, confirmPassword)
+    if (!authed || authed !== req.user.id) return res.status(403).json({ error: 'Password salah' })
+
+    const newSecret = crypto.randomBytes(32).toString('hex')
+    try {
+      const version = await rotateSecret(newSecret, req.user.id)
+      await logAudit({ userId: req.user.id, action: 'license_secret_rotate', target: `v${version}`, ip: clientIp(req) })
+      res.json({ ok: true, version, message: `Secret di-rotasi ke versi ${version}. Kode baru akan pakai secret baru; kode lama tetap valid (via DB version lookup).` })
+    } catch (e) {
+      res.status(500).json({ error: `Rotasi gagal: ${e.message}` })
+    }
   })
 
   // Audit log

@@ -14,6 +14,7 @@ import SlideshowIcon from '@mui/icons-material/Slideshow'
 import HistoryIcon from '@mui/icons-material/History'
 import LocalOfferIcon from '@mui/icons-material/LocalOffer'
 import PaymentsIcon from '@mui/icons-material/Payments'
+import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import SettingsIcon from '@mui/icons-material/Settings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import MenuIcon from '@mui/icons-material/Menu'
@@ -34,6 +35,7 @@ const navItems = [
   { label: 'Audit Log', icon: <HistoryIcon />, path: '/audit', roles: ['super_admin'] },
   { label: 'Pricing Tiers', icon: <LocalOfferIcon />, path: '/tiers', roles: ['super_admin'] },
   { label: 'Billing', icon: <PaymentsIcon />, path: '/billing', roles: ['super_admin'] },
+  { label: 'License Codes', icon: <VpnKeyIcon />, path: '/license', roles: ['super_admin'] },
   { label: 'Settings', icon: <SettingsIcon />, path: '/settings', roles: ['super_admin', 'tenant_admin'] },
 ]
 

@@ -12,10 +12,50 @@ import type { PhotoFilter } from './modules/camera/comicFilter'
 import { queueStrip, syncOutbox, outboxCount } from './modules/offline/outbox'
 import { fetchAiStatus } from './modules/camera/aiSketch'
 import PinGate from './modules/pin/PinGate'
+import LicenseGate from './components/LicenseGate'
+
+// ── License data shape (must match LicenseGate.tsx) ────────────────────────
+interface LicenseData {
+  vendorId: string
+  expiry: number   // Unix timestamp in MILLISECONDS
+  deviceFingerprint: string
+  activatedAt: number
+}
+
+const LICENSE_KEY = 'pb_license_v1'
+
+function hasValidLicense(): LicenseData | null {
+  try {
+    const raw = localStorage.getItem(LICENSE_KEY)
+    if (!raw) return null
+    const lic: LicenseData = JSON.parse(raw)
+    if (lic.expiry > Date.now()) return lic
+    return null
+  } catch { return null }
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export default function App() {
+  // ── License gate: only enforced when VITE_LICENSE_ENFORCE=1 at build time ──
+  // Default OFF: keeps live tenants (booth/hallo/testing) working without a
+  // license. Turn ON only for dedicated vendor builds (kiosk at events):
+  //   VITE_LICENSE_ENFORCE=1 VITE_LICENSE_SECRET=<same-as-server> npm run build
+  const enforceLicense = import.meta.env.VITE_LICENSE_ENFORCE === '1'
+  const [license, setLicense] = useState<LicenseData | null>(() => (enforceLicense ? hasValidLicense() : ({ vendorId: 'unrestricted', expiry: Infinity, deviceFingerprint: '', activatedAt: Date.now() } as LicenseData)))
+
+  if (enforceLicense && !license) {
+    return (
+      <LicenseGate
+        onActivated={setLicense}
+        // HMAC secret must match LICENSE_SECRET_KEY env var on server.
+        // In production, prefer: keep secret server-side, call /api/admin/license/redeem
+        // to validate, then receive an opaque token. Demo below shows local verify.
+        hmacSecret={import.meta.env.VITE_LICENSE_SECRET || 'default-secret-change-me'}
+      />
+    )
+  }
+
   const { videoRef, error } = useCamera()
   const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, design, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)

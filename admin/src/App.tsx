@@ -16,6 +16,7 @@ import Attract from '@/pages/Attract'
 import PricingTiers from '@/pages/PricingTiers'
 import AuditLog from '@/pages/AuditLog'
 import Billing from '@/pages/Billing'
+import LicenseCodes from '@/pages/LicenseCodes'
 import Settings from '@/pages/Settings'
 import Manage from '@/pages/Manage'
 
@@ -58,6 +59,7 @@ export default function App() {
               <Route path="audit" element={<RoleRoute roles={SUPER}><AuditLog /></RoleRoute>} />
               <Route path="billing" element={<RoleRoute roles={SUPER}><Billing /></RoleRoute>} />
               <Route path="tiers" element={<RoleRoute roles={SUPER}><PricingTiers /></RoleRoute>} />
+              <Route path="license" element={<RoleRoute roles={SUPER}><LicenseCodes /></RoleRoute>} />
               <Route path="settings" element={<RoleRoute roles={TENANT}><Settings /></RoleRoute>} />
               <Route path="manage" element={<RoleRoute roles={ANY}><Manage /></RoleRoute>} />
             </Route>

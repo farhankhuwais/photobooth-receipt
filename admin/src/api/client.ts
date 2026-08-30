@@ -99,6 +99,39 @@ export const myTenantsApi = {
   remove: (slug: string) => api<{ ok: boolean }>(`/api/admin/tenants/${slug}`, { method: 'DELETE' }),
 }
 
+export interface LicenseCode {
+  id: number
+  code_hash: string
+  vendor_id: string
+  tier_slug: string | null
+  expires_at: string
+  issued_at: string
+  issued_by_email: string | null
+  redeemed_at: string | null
+  redeemed_by: string | null
+  redeemed_tenant: string | null
+  revoked_at: string | null
+  revoked_by_email: string | null
+  active: boolean
+  // Pagination metadata from list endpoint (not stored on the row)
+  total_count?: number
+}
+
+export const licenseApi = {
+  generate: (vendorId: string, expiryDays: number, tierSlug?: string) =>
+    api<{ code: string; vendorId: string; expiryDays: number }>('/api/admin/license/generate', {
+      method: 'POST', body: { vendorId, expiryDays, tierSlug },
+    }),
+  list: (limit = 20, offset = 0, vendorId?: string) =>
+    api<{ items: LicenseCode[]; total: number }>(
+      `/api/admin/license/list?limit=${limit}&offset=${offset}${vendorId ? `&vendor_id=${encodeURIComponent(vendorId)}` : ''}`,
+    ),
+  revoke: (id: number) => api<{ ok: boolean }>(`/api/admin/license/${id}/revoke`, { method: 'POST' }),
+  verify: (code: string) => api<{ valid: boolean; vendorId: string; expiry: number; error?: string }>(
+    '/api/admin/license/verify', { method: 'POST', body: { code } },
+  ),
+}
+
 function pagedQuery(q: PagedQuery): string {
   const p = new URLSearchParams()
   if (q.page !== undefined) p.set('page', String(q.page))
@@ -108,4 +141,20 @@ function pagedQuery(q: PagedQuery): string {
   if (q.sortDir) p.set('sortDir', q.sortDir)
   if (q.tenantId) p.set('tenantId', q.tenantId)
   return p.toString()
+}
+
+export const licenseSecretApi = {
+  listVersions: () => api<{
+    versions: {
+      version: number
+      created_at: string
+      rotated_by_email: string | null
+      rotated_from: number | null
+      is_current: boolean
+    }[]
+  }>('/api/admin/license/secrets'),
+  rotate: (confirmPassword: string) =>
+    api<{ ok: boolean; version: number; message: string }>('/api/admin/license/secret/rotate', {
+      method: 'POST', body: { confirmPassword },
+    }),
 }
