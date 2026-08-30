@@ -1,5 +1,7 @@
 # Photobooth Receipt
 
+> **For AI coding agents**: lihat [`AGENTS.md`](AGENTS.md) — tech stack, konvensi, dan panduan develop.
+
 Aplikasi **photobooth web (PWA)** multi-tenant — ambil foto via kamera, susun strip foto
 bergaya (multi-template + branding), cetak ke **printer thermal** dan bagi via QR + Web Share.
 
@@ -97,6 +99,7 @@ node serve.mjs
 
 ```
 photobooth/
+├─ AGENTS.md              # Panduan agent AI (tech stack, konvensi, pitfalls)
 ├─ serve.mjs              # Combined server: Express API + static file serving
 ├─ admin-api.mjs          # Admin REST API (mounted di /api/admin/*)
 ├─ db.mjs                 # Postgres helpers + schema init + migrations
