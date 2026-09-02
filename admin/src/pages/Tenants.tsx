@@ -8,9 +8,11 @@ import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
 import { tenantApi } from '@/api/client'
+import { useAuth } from '@/context/AuthContext'
 import type { Tenant } from '@/types'
 
 export default function Tenants() {
+  const { user } = useAuth()
   const [rows, setRows] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -18,6 +20,7 @@ export default function Tenants() {
   const [editing, setEditing] = useState<Tenant | null>(null)
   const [snack, setSnack] = useState('')
   const [form, setForm] = useState({ slug: '', name: '', access_pin: '' })
+  const isSuperAdmin = user?.role === 'super_admin'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -75,7 +78,7 @@ export default function Tenants() {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h5" fontWeight={700}>Manajemen Tenant</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>Tambah Tenant</Button>
+        {isSuperAdmin && <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>Tambah Tenant</Button>}
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}

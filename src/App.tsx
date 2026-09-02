@@ -6,7 +6,6 @@ import { qrDataUrl } from './modules/qr/qr'
 import { printSmart } from './modules/print/printService'
 import { uploadStripLocal } from './modules/share/upload'
 import { buildPrintJob } from './modules/escpos/encoder'
-import { Settings } from './modules/branding/Settings'
 import { applyFilter, FILTER_LABELS } from './modules/camera/comicFilter'
 import type { PhotoFilter } from './modules/camera/comicFilter'
 import { queueStrip, syncOutbox, outboxCount } from './modules/offline/outbox'
@@ -68,7 +67,7 @@ export default function App() {
   const [qrPos, setQrPos] = useState<{ x: number; y: number } | null>(null)  // posisi bubble (null = default pojok)
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
   const [msg, setMsg] = useState<string>('')
-  const [showSettings, setShowSettings] = useState(false)
+
   const [step, setStep] = useState<1 | 2>(1)     // 1=pilih grid, 2=pilih desain
   const [grid, setGrid] = useState<number | null>(null) // jumlah foto terpilih (1/2/3/4)
   const [armed, setArmed] = useState(false)      // kamera sudah "siap" (tombol Mulai Jepret ditekan)
@@ -160,11 +159,6 @@ export default function App() {
   }
 
   // Reload background + ikon attract setelah diubah di panel Settings.
-  function reloadAttract() {
-    const m = useSession.getState().mode
-    loadAttract(m)
-    loadAttractIcon(m)
-  }
 
   // Load attract background + ikon saat mode berubah / boot.
   useEffect(() => {
@@ -265,36 +259,55 @@ export default function App() {
     st.setStatus('capturing')
   }
 
-  // Load active config dari DB saat boot (survive refresh).
-  useEffect(() => {
-    let active = true
-    fetch('/api/config')
-      .then((r) => (r.ok ? r.json() : null))
-      .then(async (cfg) => {
-        if (!active || !cfg) return
-        const st = useSession.getState()
-        st.setMode(cfg.mode === 'event' ? 'event' : 'regular')
-        st.setPrice(Number(cfg.price) || 5000)
-        st.setActivePreset(cfg.preset_name || null)
-        // Prioritaskan branding dari preset aktif (termasuk jarak dekorasi),
-        // fallback ke branding app_config kalau preset gak ada.
-        let branding = cfg.branding
-        if (cfg.preset_name) {
-          try {
-            const p = await (await fetch(`/api/presets/${encodeURIComponent(cfg.preset_name)}`)).json()
-            if (p?.branding) branding = p.branding
-          } catch { /* ignore */ }
-        }
-        if (branding) {
-          // Server jadi source of truth utk branding preset, TAPI setting device-lokal
-          // (toggle kotak Capturing) dipertahankan biar gak ke-reset tiap refresh.
-          const localShowCapturingBox = useSession.getState().branding.showCapturingBox
-          st.setBranding({ ...branding, showCapturingBox: localShowCapturingBox })
-        }
-      })
-      .catch(() => {})
-    return () => { active = false }
+  // Load active config dari DB saat boot + polling agar setting admin selalu ikut.
+  const loadConfig = useCallback(async () => {
+    try {
+      const r = await fetch('/api/config')
+      if (!r.ok) return
+      const cfg = await r.json()
+      const st = useSession.getState()
+      st.setMode(cfg.mode === 'event' ? 'event' : 'regular')
+      st.setPrice(Number(cfg.price) || 5000)
+      st.setActivePreset(cfg.preset_name || null)
+      let branding = cfg.branding
+      if (!branding && cfg.preset_name) {
+        try {
+          const p = await (await fetch(`/api/presets/${encodeURIComponent(cfg.preset_name)}`)).json()
+          if (p?.branding) branding = p.branding
+        } catch { /* ignore */ }
+      }
+      if (branding) {
+        // Admin config adalah source of truth, replace seluruh branding dari preset/config
+        useSession.setState({ branding: { ...branding } })
+
+        const tpl = typeof branding.template === 'string' ? branding.template : null
+        const sc = typeof branding.shotCount === 'number' ? branding.shotCount : null
+        const fid = typeof branding.selectedFrameId === 'string' ? branding.selectedFrameId : null
+        const did = typeof branding.selectedDesignId === 'string' ? branding.selectedDesignId : null
+        const dc = typeof branding.designChosen === 'boolean' ? branding.designChosen : null
+        const scr = typeof branding.screen === 'string' ? branding.screen : null
+
+        if (tpl) st.setTemplate(tpl)
+        if (typeof sc === 'number') useSession.setState({ shotCount: sc })
+        if (typeof fid === 'string') st.setSelectedFrameId(fid)
+        if (typeof did === 'string') st.setSelectedDesignId(did)
+        if (typeof dc === 'boolean') useSession.setState({ designChosen: dc })
+        if (typeof scr === 'string' && (scr === 'attract' || scr === 'booth')) st.setScreen(scr as 'attract' | 'booth')
+      }
+    } catch { /* ignore */ }
   }, [])
+
+  useEffect(() => {
+    loadConfig()
+    const iv = setInterval(loadConfig, 30000)
+    const onVisibility = () => { if (document.visibilityState === 'visible') loadConfig() }
+    window.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearInterval(iv)
+      window.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [loadConfig])
+
 
   // Ambil 1 frame dari video → dataURL (mirror horizontal, crop 4:3).
   // Dipakai captureFrame() (append) DAN retakeSlot() (override index tertentu).
@@ -661,16 +674,7 @@ export default function App() {
           {/* Overlay tipis biar teks tetap kebaca tanpa menutupi background */}
           <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/25 via-black/10 to-black/35 pointer-events-none"></div>
 
-          {/* Tombol Pengaturan pojok kanan atas (satu pintu semua setting) */}
-          <div className="absolute top-sm right-sm z-30">
-            <button
-              onClick={() => setShowSettings(true)}
-              className="flex items-center justify-center w-12 h-12 border-4 border-black bg-surface text-on-surface brutal-shadow-sm hover:bg-surface-variant"
-              title="Pengaturan"
-            >
-              <span className="material-symbols-outlined text-[24px]">settings</span>
-            </button>
-          </div>
+          {/* Tombol Pengaturan disembunyikan agar setting hanya lewat admin dashboard */}
 
           <button
             onClick={enterBooth}
@@ -1220,7 +1224,6 @@ export default function App() {
         </div>
       )}
 
-      {showSettings && <Settings onClose={() => setShowSettings(false)} onAttractChange={reloadAttract} />}
 
       {/* Badge versi bundle — buat verifikasi live tanpa devtools (cek SW cache).
           Pakai __BUILD_HASH__ (di-inject vite.config dari BUILD_HASH/Date.now tiap build),

@@ -34,7 +34,15 @@ export default defineConfig({
         // Dan /u/ (link download hasil foto dari QR) — jangan di-intercept SW
         // supaya langsung serve gambar asli, bukan app.
         navigateFallbackDenylist: [/^\/portal/, /^\/guides/, /^\/u\//],
-        cleanupOutdatedCaches: true
+        cleanupOutdatedCaches: true,
+        // Jangan cache endpoint API (design frame, dll) — selalu fetch baru dari network
+        runtimeCaching: [
+          {
+            urlPattern: /^\/api\//,
+            handler: 'NetworkFirst',
+            options: { cacheName: 'api-cache', expiration: { maxEntries: 0, maxAgeSeconds: 1 } },
+          },
+        ],
       }
     })
   ],

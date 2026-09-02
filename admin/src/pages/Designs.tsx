@@ -10,6 +10,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import AddIcon from '@mui/icons-material/Add'
 import DesignEditor from '@/components/DesignEditor'
 import { api } from '@/api/client'
+import { useAuth } from '@/context/AuthContext'
 
 interface Design {
   id: string
@@ -19,10 +20,11 @@ interface Design {
   slotsCount: number
   slots: Array<{ x: number; y: number; w: number; h: number; rot: number }>
   hasFrame: boolean
-  created_at: string
+  createdAt: string
 }
 
 export default function Designs() {
+  const { user } = useAuth()
   const [rows, setRows] = useState<Design[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -35,6 +37,13 @@ export default function Designs() {
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorKey, setEditorKey] = useState(0) // remount editor on open
   const [editorSelId, setEditorSelId] = useState<string>('')
+
+  // Tenant admin: auto-set tenantFilter to own tenant so "Buat Design" is always enabled
+  useEffect(() => {
+    if (user?.role === 'tenant_admin' && user.tenant_id) {
+      setTenantFilter(user.tenant_id)
+    }
+  }, [user])
 
   const loadDesignIntoEditor = (id: string) => {
     setEditorSelId(id)
@@ -85,6 +94,27 @@ export default function Designs() {
     }
   }
 
+  // Load frame thumbnail for each row (cached per-id)
+  const [rowFrames, setRowFrames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let cancelled = false
+    async function loadAll() {
+      const out: Record<string, string> = {}
+      for (const d of rows) {
+        if (!d.hasFrame) continue
+        try {
+          const detail = await api<{ id: string; frameBuf?: string }>(
+            `/api/admin/designs/${encodeURIComponent(d.id)}${tenantFilter ? `?tenantSlug=${tenantFilter}` : ''}`
+          )
+          if (detail.frameBuf) out[d.id] = `data:image/png;base64,${detail.frameBuf}`
+        } catch { /* ignore */ }
+      }
+      if (!cancelled) setRowFrames(out)
+    }
+    if (rows.length) loadAll()
+    return () => { cancelled = true }
+  }, [rows, tenantFilter])
+
   const handleDelete = async (d: Design) => {
     if (!window.confirm(`Hapus design "${d.name}"?`)) return
     try {
@@ -96,20 +126,23 @@ export default function Designs() {
     }
   }
 
+  const isTenantAdmin = user?.role === 'tenant_admin'
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3, gap: 2 }}>
         <Typography variant="h5" fontWeight={700}>Manajemen Design ({total})</Typography>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-          <TextField
-            size="small" select label="Filter Tenant" value={tenantFilter}
-            onChange={(e) => setTenantFilter(e.target.value)} sx={{ minWidth: 200 }}
-          >
-            <MenuItem value="">Semua tenant</MenuItem>
-            {tenants.map((t) => (
-              <MenuItem key={t.slug} value={t.slug}>{t.name} ({t.slug})</MenuItem>
-            ))}
-          </TextField>
+          {!isTenantAdmin && (
+            <TextField
+              size="small" select label="Filter Tenant" value={tenantFilter}
+              onChange={(e) => setTenantFilter(e.target.value)} sx={{ minWidth: 200 }}
+            >
+              <MenuItem value="">Semua tenant</MenuItem>
+              {tenants.map((t) => (
+                <MenuItem key={t.slug} value={t.slug}>{t.name} ({t.slug})</MenuItem>
+              ))}
+            </TextField>
+          )}
           <Button variant="outlined" onClick={load}>Refresh</Button>
           <Button variant="contained" color="primary" startIcon={<AddIcon />}
             onClick={() => { setEditorOpen(true); openNewEditor(); }} disabled={!tenantFilter}>
@@ -143,9 +176,17 @@ export default function Designs() {
                     sx={{
                       width: 60, height: 80, bgcolor: '#eee', border: '1px solid #ccc',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      position: 'relative',
+                      position: 'relative', overflow: 'hidden',
                     }}
                   >
+                    {rowFrames[d.id] ? (
+                      <Box component="img" src={rowFrames[d.id]} alt="" sx={{
+                        position: 'absolute', inset: 0, width: '100%', height: '100%',
+                        objectFit: 'fill', pointerEvents: 'none',
+                      }} />
+                    ) : (
+                      <Typography variant="caption" sx={{ fontSize: 9, color: '#999' }}>no frame</Typography>
+                    )}
                     {d.slots.slice(0, 4).map((s, i) => (
                       <Box key={i} sx={{
                         position: 'absolute',
@@ -163,7 +204,7 @@ export default function Designs() {
                 <TableCell>{d.canvasW}×{d.canvasH}</TableCell>
                 <TableCell>{d.slotsCount}</TableCell>
                 <TableCell>{d.hasFrame ? '✓' : '—'}</TableCell>
-                <TableCell>{new Date(d.created_at).toLocaleString('id-ID')}</TableCell>
+                <TableCell>{new Date(d.createdAt).toLocaleString('id-ID')}</TableCell>
                 <TableCell align="right">
                   <Tooltip title="Edit design mockup">
                     <span>

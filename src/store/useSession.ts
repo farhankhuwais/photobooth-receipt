@@ -123,16 +123,6 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   printDarkness: 100,
 }
 
-function loadBranding(): BrandingConfig {
-  try {
-    const raw = localStorage.getItem('pb_branding')
-    if (raw) return { ...DEFAULT_BRANDING, ...JSON.parse(raw) }
-  } catch {
-    /* ignore */
-  }
-  return DEFAULT_BRANDING
-}
-
 function loadBridgeUrl(): string {
   try {
     return localStorage.getItem('pb_bridge') || ''
@@ -146,7 +136,7 @@ export const useSession = create<SessionState>((set) => ({
   shots: [],
   template: 'strip3',
   shotCount: 3,
-  branding: loadBranding(),
+  branding: DEFAULT_BRANDING,
   frames: [],
   selectedFrameId: null,
   designs: [],
@@ -168,12 +158,7 @@ export const useSession = create<SessionState>((set) => ({
   setTemplate: (template) => set({ template, shotCount: countFor(template), selectedFrameId: null }),
   addShot: (dataUrl) => set((s) => ({ shots: [...s.shots, dataUrl] })),
   resetShots: () => set({ shots: [], status: 'idle', digitalUrl: null }),
-  setBranding: (b) => set((s) => {
-    const next = { ...s.branding, ...b }
-    // Persist ke localStorage biar setting bertahan setelah refresh.
-    try { localStorage.setItem('pb_branding', JSON.stringify(next)) } catch { /* ignore */ }
-    return { branding: next }
-  }),
+  setBranding: (b) => set((s) => ({ branding: { ...s.branding, ...b } })),
   setFrames: (frames) => set({ frames }),
   setSelectedFrameId: (id) => set({ selectedFrameId: id }),
   setDesigns: (designs) => set({ designs }),

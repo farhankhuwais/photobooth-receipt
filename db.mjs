@@ -715,6 +715,8 @@ export async function listDesigns(tenantId = DEFAULT_TENANT) {
     slotsCount: Number(row.slots_count),
     slots: typeof row.slots_raw === 'string' ? JSON.parse(row.slots_raw) : (row.slots_raw || []),
     hasFrame: row.has_frame,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }))
 }
 
@@ -722,13 +724,20 @@ export async function getDesign(id, tenantId = DEFAULT_TENANT) {
   const r = await pool.query('SELECT id, name, frame_data, canvas_w, canvas_h, slots FROM designs WHERE id = $1 AND tenant_id = $2', [id, tenantId])
   if (!r.rows[0]) return null
   const row = r.rows[0]
+  let frameBuf = null
+  if (row.frame_data) {
+    frameBuf = Buffer.isBuffer(row.frame_data) ? row.frame_data.toString('base64') : Buffer.from(row.frame_data).toString('base64')
+  }
   return {
     id: row.id,
     name: row.name,
-    frame_data: row.frame_data || null,
     canvas_w: row.canvas_w,
     canvas_h: row.canvas_h,
     slots: typeof row.slots === 'string' ? JSON.parse(row.slots) : row.slots,
+    hasFrame: !!frameBuf,
+    frameBuf,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 

@@ -582,7 +582,9 @@ export function adminApi() {
     const tenantSlug = req.user.role === 'super_admin' ? (req.query.tenantSlug || null) : req.user.tenant_id
     const item = await getDesign(req.params.id, tenantSlug || undefined)
     if (!item) return res.status(404).json({ error: 'Design tidak ditemukan' })
-    res.json(item)
+    // Strip raw Buffer (frame_data) — only send base64 (frameBuf) to keep response lean
+    const { frame_data, ...jsonSafe } = item
+    res.json(jsonSafe)
   })
 
   r.delete('/designs/:id', requireSession, requireRole('super_admin', 'tenant_admin'), requireCsrf, async (req, res) => {

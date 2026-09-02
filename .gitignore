@@ -12,3 +12,5 @@ dev.err
 
 # build cache
 *.tsbuildinfo
+
+admin/cookies.txt

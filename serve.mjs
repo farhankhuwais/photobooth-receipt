@@ -60,8 +60,17 @@ app.use('/api', async (req, res, next) => {
     res.set('Cache-Control', 'no-store, max-age=0')
     return res.status(404).end()
   }
-  const path = String(req.path || '')
-  if (path === '/tenant/pin-status' || path === '/tenant/verify-pin' || path.startsWith('/admin/')) return next()
+  const path = String(req.originalUrl || '').split('?')[0]
+  if (path === '/api/tenant/pin-status' || path === '/api/tenant/verify-pin' || path.startsWith('/admin/')) return next()
+  // Allow design metadata and frame image endpoints without PIN
+  // (<img> tags don't send headers, so frame must be public; metadata is non-sensitive)
+  if (path.startsWith('/api/designs/')) return next()
+  if (path === '/api/designs') return next()
+  // Allow app config (mode, price, branding) without PIN
+  // App booth fetches this on boot without <img>/fetch headers in same chain
+  if (path === '/api/config') return next()
+  // Preset metadata is public per-tenant (used in app picker)
+  if (path === '/api/presets' || path.startsWith('/api/presets/')) return next()
   try {
     const { rows } = await pool.query('SELECT access_pin FROM tenants WHERE slug = $1', [req.tenantId])
     const pin = rows[0]?.access_pin || null
@@ -472,7 +481,7 @@ app.get('/api/designs/:id', async (req, res) => {
       canvas_w: d.canvas_w,
       canvas_h: d.canvas_h,
       slots: d.slots,
-      hasFrame: !!d.frame_data,
+      hasFrame: d.hasFrame,
     })
   } catch (e) {
     res.status(500).json({ error: String(e) })
@@ -481,11 +490,11 @@ app.get('/api/designs/:id', async (req, res) => {
 // Ambil blob PNG bingkai satu design (dipakai saat render hasil cetak).
 app.get('/api/designs/:id/frame', async (req, res) => {
   try {
-    const d = await getDesign(req.params.id, req.tenantId)
-    if (!d || !d.frame_data) return res.status(404).end()
+    const r = await pool.query('SELECT frame_data FROM designs WHERE id = $1 AND tenant_id = $2', [req.params.id, req.tenantId])
+    if (!r.rows[0] || !r.rows[0].frame_data) return res.status(404).end()
     res.set('Content-Type', 'image/png')
     res.set('Cache-Control', 'public, max-age=31536000, immutable')
-    res.send(d.frame_data)
+    res.send(r.rows[0].frame_data)
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }

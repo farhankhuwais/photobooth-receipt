@@ -23,7 +23,7 @@ export function usePinGate() {
       })
       .catch(() => {
         if (cancelled) return
-        setState({ status: 'ok' })
+        setState({ status: 'error', message: 'Gagal memeriksa status PIN' })
       })
     return () => { cancelled = true }
   }, [])

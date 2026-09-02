@@ -6,9 +6,20 @@ let csrfToken = ''
 
 async function getCsrf(): Promise<string> {
   if (csrfToken) return csrfToken
-  // Token dikirim via cookie readable ("double-submit"), baca dari document.cookie.
-  const m = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/)
-  csrfToken = m ? decodeURIComponent(m[1]) : ''
+  const m = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]+)/)
+  if (m) {
+    csrfToken = decodeURIComponent(m[1])
+    return csrfToken
+  }
+  try {
+    const res = await fetch('/api/admin/csrf', { credentials: 'include' })
+    if (res.ok) {
+      const j = await res.json()
+      csrfToken = j.csrfToken || ''
+    }
+  } catch {
+    // ignore
+  }
   return csrfToken
 }
 
