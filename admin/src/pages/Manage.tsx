@@ -174,7 +174,7 @@ export default function Manage() {
           <Typography variant="h6" fontWeight={600} mb={2}>Akses Cepat</Typography>
           <Divider sx={{ mb: 2 }} />
           <Typography variant="body2" color="text.secondary" mb={2}>
-            Untuk mengelola foto, frame, presets, attract, dan setting aplikasi, silakan buka subdomain tenant langsung atau gunakan menu di sidebar.
+            Untuk mengelola foto, frame, presets, dan setting aplikasi, silakan buka subdomain tenant langsung atau gunakan menu di sidebar.
           </Typography>
           <Box sx={{ mt: 1, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             <a

@@ -154,20 +154,6 @@ export async function initDb() {
       enabled     BOOLEAN NOT NULL DEFAULT false,
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-    CREATE TABLE IF NOT EXISTS attract_assets (
-      mode        TEXT PRIMARY KEY,
-      tenant_id   TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
-      media_type  TEXT NOT NULL,
-      data        BYTEA NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE TABLE IF NOT EXISTS attract_icons (
-      mode        TEXT PRIMARY KEY,
-      tenant_id   TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
-      media_type  TEXT NOT NULL,
-      data        BYTEA NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
     CREATE TABLE IF NOT EXISTS admin_user (
       id              SERIAL PRIMARY KEY,
       email           TEXT NOT NULL UNIQUE,
@@ -245,8 +231,6 @@ export async function initDb() {
   await pool.query(`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
   await pool.query(`ALTER TABLE app_config ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
   await pool.query(`ALTER TABLE ai_settings ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
-  await pool.query(`ALTER TABLE attract_assets ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
-  await pool.query(`ALTER TABLE attract_icons ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
   await pool.query(`ALTER TABLE frames ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
   await pool.query(`ALTER TABLE designs ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
   // Migrasi kolom admin_user baru (tabel lama tidak diubah oleh CREATE TABLE IF NOT EXISTS).
@@ -343,8 +327,6 @@ export async function initDb() {
   await backfill('transactions')
   await backfill('app_config')
   await backfill('ai_settings')
-  await backfill('attract_assets')
-  await backfill('attract_icons')
   await backfill('frames')
   await backfill('designs')
 
@@ -743,42 +725,6 @@ export async function getDesign(id, tenantId = DEFAULT_TENANT) {
 
 export async function deleteDesign(id, tenantId = DEFAULT_TENANT) {
   await pool.query('DELETE FROM designs WHERE id = $1 AND tenant_id = $2', [id, tenantId])
-}
-
-// ── Attract screen background (image/video) per mode, stored in Postgres ──
-export async function saveAttract(mode, mediaType, buf, tenantId = DEFAULT_TENANT) {
-  await pool.query(
-    `INSERT INTO attract_assets (tenant_id, mode, media_type, data, created_at) VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (mode) DO UPDATE SET media_type = EXCLUDED.media_type, data = EXCLUDED.data, created_at = now()`,
-    [tenantId, mode, mediaType, buf]
-  )
-}
-
-export async function getAttract(mode, tenantId = DEFAULT_TENANT) {
-  const r = await pool.query('SELECT media_type, data FROM attract_assets WHERE mode = $1 AND tenant_id = $2', [mode, tenantId])
-  return r.rows[0] || null
-}
-
-export async function deleteAttract(mode, tenantId = DEFAULT_TENANT) {
-  await pool.query('DELETE FROM attract_assets WHERE mode = $1 AND tenant_id = $2', [mode, tenantId])
-}
-
-// ── Attract tap icon (custom PNG per mode) ──
-export async function saveAttractIcon(mode, mediaType, buf, tenantId = DEFAULT_TENANT) {
-  await pool.query(
-    `INSERT INTO attract_icons (tenant_id, mode, media_type, data, created_at) VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (mode) DO UPDATE SET media_type = EXCLUDED.media_type, data = EXCLUDED.data, created_at = now()`,
-    [tenantId, mode, mediaType, buf]
-  )
-}
-
-export async function getAttractIcon(mode, tenantId = DEFAULT_TENANT) {
-  const r = await pool.query('SELECT media_type, data FROM attract_icons WHERE mode = $1 AND tenant_id = $2', [mode, tenantId])
-  return r.rows[0] || null
-}
-
-export async function deleteAttractIcon(mode, tenantId = DEFAULT_TENANT) {
-  await pool.query('DELETE FROM attract_icons WHERE mode = $1 AND tenant_id = $2', [mode, tenantId])
 }
 
 // =================== ADMIN SPA HELPERS ===================

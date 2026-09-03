@@ -10,7 +10,6 @@ import PhotoIcon from '@mui/icons-material/Photo'
 import StyleIcon from '@mui/icons-material/Style'
 import PaletteIcon from '@mui/icons-material/Palette'
 import BookmarkIcon from '@mui/icons-material/Bookmark'
-import SlideshowIcon from '@mui/icons-material/Slideshow'
 import HistoryIcon from '@mui/icons-material/History'
 import LocalOfferIcon from '@mui/icons-material/LocalOffer'
 import PaymentsIcon from '@mui/icons-material/Payments'
@@ -31,7 +30,6 @@ const navItems = [
   { label: 'Frames', icon: <StyleIcon />, path: '/frames', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Designs', icon: <PaletteIcon />, path: '/designs', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Presets', icon: <BookmarkIcon />, path: '/presets', roles: ['super_admin', 'tenant_admin'] },
-  { label: 'Attract', icon: <SlideshowIcon />, path: '/attract', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Audit Log', icon: <HistoryIcon />, path: '/audit', roles: ['super_admin'] },
   { label: 'Pricing Tiers', icon: <LocalOfferIcon />, path: '/tiers', roles: ['super_admin'] },
   { label: 'Billing', icon: <PaymentsIcon />, path: '/billing', roles: ['super_admin'] },

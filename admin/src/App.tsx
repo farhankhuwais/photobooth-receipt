@@ -12,7 +12,6 @@ import Photos from '@/pages/Photos'
 import Frames from '@/pages/Frames'
 import Designs from '@/pages/Designs'
 import Presets from '@/pages/Presets'
-import Attract from '@/pages/Attract'
 import PricingTiers from '@/pages/PricingTiers'
 import AuditLog from '@/pages/AuditLog'
 import Billing from '@/pages/Billing'
@@ -55,7 +54,6 @@ export default function App() {
               <Route path="frames" element={<RoleRoute roles={TENANT}><Frames /></RoleRoute>} />
               <Route path="designs" element={<RoleRoute roles={TENANT}><Designs /></RoleRoute>} />
               <Route path="presets" element={<RoleRoute roles={TENANT}><Presets /></RoleRoute>} />
-              <Route path="attract" element={<RoleRoute roles={TENANT}><Attract /></RoleRoute>} />
               <Route path="audit" element={<RoleRoute roles={SUPER}><AuditLog /></RoleRoute>} />
               <Route path="billing" element={<RoleRoute roles={SUPER}><Billing /></RoleRoute>} />
               <Route path="tiers" element={<RoleRoute roles={SUPER}><PricingTiers /></RoleRoute>} />

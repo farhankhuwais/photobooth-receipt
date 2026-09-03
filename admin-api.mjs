@@ -15,7 +15,6 @@ import {
   getUserById, setLastLogin, getGlobalOverview, listPhotos, deletePhoto,
   listFrames, listDesigns, getDesign, deleteDesign, saveDesign, updateDesign,
   getConfig, saveConfig, listPresets, getPreset, savePreset, deletePreset,
-  getAttract, saveAttract, deleteAttract, getAttractIcon, saveAttractIcon, deleteAttractIcon,
   listTiers, getTier, createTier, updateTier, deleteTier,
   generateUserCode, assignUserCode, setUserTier, checkTierLimit, getUserTierLimit, getTenantUsage,
   countTenantsByOwner, listTenantsByOwner, isTenantOwner,
@@ -26,7 +25,7 @@ import {
 } from './db.mjs'
 
 function expressJson() {
-  return expressJsonRaw({ limit: '1mb' })
+  return expressJsonRaw({ limit: '20mb' })
 }
 
 const jsonMiddleware = expressJson()
@@ -717,44 +716,10 @@ export function adminApi() {
     storage: multer.memoryStorage(),
   })
 
-  // GET /attract/status?tenantSlug=X → metadata for all assets (no binary)
-  r.get('/attract/status', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
-    const tenantSlug = req.query.tenantSlug
-    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
-    const [regBg, evBg, regIcon, evIcon] = await Promise.all([
-      getAttract('regular', tenantSlug).catch(() => null),
-      getAttract('event', tenantSlug).catch(() => null),
-      getAttractIcon('regular', tenantSlug).catch(() => null),
-      getAttractIcon('event', tenantSlug).catch(() => null),
-    ])
-    res.json({
-      regular: {
-        background: regBg ? { has: true, mediaType: regBg.media_type } : { has: false, mediaType: null },
-        icon: regIcon ? { has: true, mediaType: regIcon.media_type } : { has: false, mediaType: null },
-      },
-      event: {
-        background: evBg ? { has: true, mediaType: evBg.media_type } : { has: false, mediaType: null },
-        icon: evIcon ? { has: true, mediaType: evIcon.media_type } : { has: false, mediaType: null },
-      },
-    })
-  })
-
   // GET /attract/file/:type/:mode?tenantSlug=X → binary image/video (for <img src>)
+  // Note: attract assets removed in favor of inline branding.attractMedia in presets.
   r.get('/attract/file/:type/:mode', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
-    const { type, mode } = req.params
-    const tenantSlug = req.query.tenantSlug
-    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
-    const cleanMode = mode === 'event' ? 'event' : 'regular'
-    try {
-      const fn = type === 'icon' ? getAttractIcon : getAttract
-      const row = await fn(cleanMode, tenantSlug)
-      if (!row) return res.status(404).end()
-      res.set('Content-Type', row.media_type)
-      res.set('Cache-Control', 'public, max-age=0')
-      res.send(row.data)
-    } catch (e) {
-      res.status(500).json({ error: String(e) })
-    }
+    res.status(404).end()
   })
 
   // POST /designs (multipart: image=frame, name, slots, canvas_w, canvas_h, tenantSlug)
@@ -793,52 +758,32 @@ export function adminApi() {
     res.json({ ok: true })
   })
 
-  // POST /attract/:mode (background upload) — multipart/form-data 'media'
-  r.post('/attract/:mode', requireSession, requireRole('super_admin', 'tenant_admin'), upload.single('media'), async (req, res) => {
-    const tenantSlug = req.query.tenantSlug
-    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
-    if (!req.file) return res.status(400).json({ error: 'no media file' })
-    const mt = req.file.mimetype || 'application/octet-stream'
-    if (!/^image\//.test(mt) && !/^video\//.test(mt)) {
-      return res.status(400).json({ error: 'hanya image atau video' })
-    }
-    const cleanMode = req.params.mode === 'event' ? 'event' : 'regular'
-    await saveAttract(cleanMode, mt, req.file.buffer, tenantSlug)
-    await logAudit({ userId: req.user.id, action: 'attract_upload', target: `${cleanMode}/background`, ip: clientIp(req) })
-    res.json({ ok: true, mode: cleanMode, mediaType: mt })
+  // POST /attract/:mode (background upload) — removed (attract is now part of preset branding)
+  r.post('/attract/:mode', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
+    res.status(410).json({ error: 'attract feature removed; use preset branding.attractMedia' })
   })
 
-  // DELETE /attract/:mode (background delete)
+  // DELETE /attract/:mode (background delete) — removed
   r.delete('/attract/:mode', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
-    const tenantSlug = req.query.tenantSlug
-    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
-    const cleanMode = req.params.mode === 'event' ? 'event' : 'regular'
-    await deleteAttract(cleanMode, tenantSlug)
-    await logAudit({ userId: req.user.id, action: 'attract_delete', target: `${cleanMode}/background`, ip: clientIp(req) })
-    res.json({ ok: true })
+    res.status(410).json({ error: 'attract feature removed; use preset branding.attractMedia' })
   })
 
-  // POST /attract/:mode/icon (icon upload) — multipart/form-data 'image'
-  r.post('/attract/:mode/icon', requireSession, requireRole('super_admin', 'tenant_admin'), upload.single('image'), async (req, res) => {
-    const tenantSlug = req.query.tenantSlug
-    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
-    if (!req.file) return res.status(400).json({ error: 'no image file' })
-    const mt = req.file.mimetype || 'image/png'
-    if (!/^image\//.test(mt)) return res.status(400).json({ error: 'hanya image' })
-    const cleanMode = req.params.mode === 'event' ? 'event' : 'regular'
-    await saveAttractIcon(cleanMode, mt, req.file.buffer, tenantSlug)
-    await logAudit({ userId: req.user.id, action: 'attract_upload', target: `${cleanMode}/icon`, ip: clientIp(req) })
-    res.json({ ok: true, mode: cleanMode, mediaType: mt })
+  // POST /attract/:mode/icon (icon upload) — removed
+  r.post('/attract/:mode/icon', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
+    res.status(410).json({ error: 'attract feature removed; use preset branding.attractIcon' })
   })
 
-  // DELETE /attract/:mode/icon (icon delete)
+  // DELETE /attract/:mode/icon (icon delete) — removed
   r.delete('/attract/:mode/icon', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
-    const tenantSlug = req.query.tenantSlug
-    if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
-    const cleanMode = req.params.mode === 'event' ? 'event' : 'regular'
-    await deleteAttractIcon(cleanMode, tenantSlug)
-    await logAudit({ userId: req.user.id, action: 'attract_delete', target: `${cleanMode}/icon`, ip: clientIp(req) })
-    res.json({ ok: true })
+    res.status(410).json({ error: 'attract feature removed; use preset branding.attractIcon' })
+  })
+
+  // GET /attract/status — removed (returns empty status for legacy clients)
+  r.get('/attract/status', requireSession, requireRole('super_admin', 'tenant_admin'), async (_req, res) => {
+    res.json({
+      regular: { background: { has: false, mediaType: null }, icon: { has: false, mediaType: null } },
+      event:   { background: { has: false, mediaType: null }, icon: { has: false, mediaType: null } },
+    })
   })
 
   return r

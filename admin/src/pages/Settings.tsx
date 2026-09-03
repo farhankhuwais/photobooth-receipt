@@ -8,6 +8,71 @@ import SaveIcon from '@mui/icons-material/Save'
 import { api } from '@/api/client'
 import { useAuth } from '@/context/AuthContext'
 
+// Limit ukuran file (sebelum base64, base64 = ~1.37x byte)
+const MAX_LOGO_BYTES = 2 * 1024 * 1024 // 2 MB
+const MAX_ATTRACT_BG_BYTES = 4 * 1024 * 1024 // 4 MB input limit, akan dikompres ke ≤300KB
+const MAX_ATTRACT_BG_OUTPUT_BYTES = 320 * 1024 // 320 KB (after compression)
+
+// Compress image (resize + JPEG quality) agar dataURL tidak membebani /api/config.
+async function compressImage(
+  file: File,
+  maxBytes: number,
+  maxDim = 1920,
+  quality = 0.78,
+): Promise<string> {
+  const bitmap = await createImageBitmap(file)
+  const ratio = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height))
+  const w = Math.round(bitmap.width * ratio)
+  const h = Math.round(bitmap.height * ratio)
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')!
+  // Flatten alpha ke putih (transparan → putih agar tidak hitam saat JPEG).
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, w, h)
+  ctx.drawImage(bitmap, 0, 0, w, h)
+  bitmap.close()
+  const blob: Blob = await new Promise((resolve) =>
+    canvas.toBlob((b) => resolve(b!), 'image/jpeg', quality),
+  )
+  if (blob.size <= maxBytes) {
+    return await new Promise<string>((resolve) => {
+      const r = new FileReader()
+      r.onload = () => resolve(r.result as string)
+      r.readAsDataURL(blob)
+    })
+  }
+  // Turunkan quality jika masih > maxBytes.
+  for (const q of [0.6, 0.45, 0.3]) {
+    const b2: Blob = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b!), 'image/jpeg', q),
+    )
+    if (b2.size <= maxBytes) {
+      return await new Promise<string>((resolve) => {
+        const r = new FileReader()
+        r.onload = () => resolve(r.result as string)
+        r.readAsDataURL(b2)
+      })
+    }
+  }
+  // Fallback: kembalikan blob terkecil yang ada.
+  return await new Promise<string>((resolve) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.readAsDataURL(blob)
+  })
+}
+
+function validateFile(file: File, maxBytes: number, label: string): string | null {
+  if (file.size > maxBytes) {
+    const mb = (file.size / 1024 / 1024).toFixed(2)
+    const max = (maxBytes / 1024 / 1024).toFixed(0)
+    return `${label} terlalu besar: ${mb} MB. Maksimal ${max} MB. Kompres file atau gunakan format yang lebih kecil.`
+  }
+  return null
+}
+
 interface Branding {
   // Logo & text
   logoDataUrl?: string
@@ -30,6 +95,9 @@ interface Branding {
   photoGap?: number
   photoGap2x2X?: number
   photoGap2x2Y?: number
+  // Attract screen (Layar Awal)
+  attractMedia?: string | null
+  attractIcon?: string | null
 }
 
 interface AppConfig {
@@ -70,6 +138,8 @@ export default function Settings() {
   const [applyPresetName, setApplyPresetName] = useState<string | null>(null)
   const [updatingPreset, setUpdatingPreset] = useState(false)
   const [updatePresetName, setUpdatePresetName] = useState<string | null>(null)
+  const [attractBusy, setAttractBusy] = useState(false)
+  const [attractBusyIcon, setAttractBusyIcon] = useState(false)
 
   // Auto-set initial tenant
   useEffect(() => {
@@ -204,6 +274,67 @@ export default function Settings() {
     setPresetEditing(null)
     setPresetDraft({ name: '', mode: form.mode, price: form.price })
     setPresetDialogOpen(true)
+  }
+
+  // ── Layar Awal (attract) handlers ─────────────────────
+  // Image dikompres dulu (resize + JPEG quality) agar dataURL inline tidak
+  // membebani /api/config. State "busy" menampilkan indikator upload.
+  const handleAttractMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > MAX_ATTRACT_BG_BYTES) {
+      const mb = (file.size / 1024 / 1024).toFixed(2)
+      setError(`File terlalu besar: ${mb} MB. Maksimal ${(MAX_ATTRACT_BG_BYTES / 1024 / 1024).toFixed(0)} MB sebelum kompres.`)
+      return
+    }
+    setAttractBusy(true)
+    try {
+      const dataUrl = await compressImage(file, MAX_ATTRACT_BG_OUTPUT_BYTES)
+      setBranding({ attractMedia: dataUrl })
+      setSnack(`Background Layar Awal terupload (${Math.round(dataUrl.length / 1024)} KB)`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memproses gambar')
+    } finally {
+      setAttractBusy(false)
+    }
+  }
+
+  const handleAttractIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > 512 * 1024) {
+      setError('Ikon terlalu besar: maksimal 512 KB sebelum kompres.')
+      return
+    }
+    setAttractBusyIcon(true)
+    try {
+      // Icon biasanya kecil & bisa PNG (transparan). Compress tapi izinkan PNG
+      // kalau inputnya PNG dengan alpha.
+      let dataUrl: string
+      if (file.type === 'image/png') {
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader()
+          r.onload = () => resolve(r.result as string)
+          r.onerror = () => reject(new Error('Gagal membaca file'))
+          r.readAsDataURL(file)
+        })
+        if (dataUrl.length > 200 * 1024) {
+          // PNG transparan > 200KB: turunkan dimensi dan re-encode.
+          const compressed = await compressImage(file, 200 * 1024, 512, 0.9)
+          dataUrl = compressed
+        }
+      } else {
+        dataUrl = await compressImage(file, 200 * 1024, 512, 0.9)
+      }
+      setBranding({ attractIcon: dataUrl })
+      setSnack(`Ikon Layar Awal terupload (${Math.round(dataUrl.length / 1024)} KB)`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Gagal memproses ikon')
+    } finally {
+      setAttractBusyIcon(false)
+    }
   }
 
   const b = form.branding
@@ -402,6 +533,8 @@ export default function Settings() {
                       <input type="file" accept="image/*" hidden onChange={(e) => {
                         const file = e.target.files?.[0]
                         if (!file) return
+                        const err = validateFile(file, MAX_LOGO_BYTES, 'Logo')
+                        if (err) { setError(err); e.target.value = ''; return }
                         const reader = new FileReader()
                         reader.onload = () => setBranding({ logoDataUrl: reader.result as string })
                         reader.readAsDataURL(file)
@@ -516,12 +649,260 @@ export default function Settings() {
                 </Grid>
               </Grid>
             </Paper>
+
+            {/* ── Layar Awal (Attract) ─────────────────────────── */}
+            <Paper sx={{ p: 3, mt: 2, border: '1px solid #e3e3e3' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
+                <Box
+                  sx={{
+                    width: 34, height: 34, borderRadius: 1.5,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    bgcolor: 'rgba(25,118,210,0.08)', color: 'primary.main',
+                  }}
+                >
+                  <span style={{ fontSize: 20, lineHeight: 1 }}>🖼️</span>
+                </Box>
+                <Box>
+                  <Typography variant="h6" fontWeight={600} lineHeight={1.2}>
+                    Layar Awal (Attract)
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Background &amp; ikon layar &quot;Sentuh untuk mulai&quot;
+                  </Typography>
+                </Box>
+              </Box>
+
+              <Grid container spacing={3} sx={{ mt: 0.5 }}>
+                {/* ── Background ─────────────────────────────── */}
+                <Grid item xs={12} md={6}>
+                  <Box
+                    sx={{
+                      border: '1px solid #ececec',
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      bgcolor: '#fafafa',
+                    }}
+                  >
+                    {/* Preview area */}
+                    <Box
+                      sx={{
+                        flex: 1,
+                        minHeight: 220,
+                        position: 'relative',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: b.attractMedia ? '#f8f8f8' : '#f4f4f4',
+                        borderBottom: '1px solid #ececec',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {b.attractMedia ? (
+                        <img
+                          src={b.attractMedia}
+                          alt="Background preview"
+                          style={{
+                            width: '100%',
+                            height: 220,
+                            objectFit: 'contain',
+                            background:
+                              'repeating-conic-gradient(#f0f0f0 0% 25%, #fff 0% 50%) 0 0/16px 16px',
+                          }}
+                        />
+                      ) : (
+                        <Box sx={{ textAlign: 'center', color: '#bdbdbd', p: 3 }}>
+                          <Box sx={{ fontSize: 44, mb: 1 }}>🖼️</Box>
+                          <Typography variant="body2">Belum ada background</Typography>
+                          <Typography variant="caption" color="text.disabled">
+                            Upload gambar untuk layar awal booth
+                          </Typography>
+                        </Box>
+                      )}
+                      {attractBusy && (
+                        <Box
+                          sx={{
+                            position: 'absolute', inset: 0,
+                            display: 'flex', flexDirection: 'column', gap: 1,
+                            alignItems: 'center', justifyContent: 'center',
+                            bgcolor: 'rgba(255,255,255,0.85)',
+                          }}
+                        >
+                          <CircularProgress size={32} />
+                          <Typography variant="caption" color="text.secondary">
+                            Mengompres &amp; memproses…
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+
+                    {/* Controls */}
+                    <Box sx={{ p: 2 }}>
+                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1 }}>
+                        <Button
+                          variant="contained"
+                          component="label"
+                          size="small"
+                          disabled={attractBusy}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          {attractBusy ? 'Memproses…' : 'Upload Background'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            hidden
+                            onChange={handleAttractMediaUpload}
+                          />
+                        </Button>
+                        {b.attractMedia && (
+                          <Button
+                            color="error"
+                            variant="outlined"
+                            size="small"
+                            onClick={() => setBranding({ attractMedia: null })}
+                            disabled={attractBusy}
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Hapus
+                          </Button>
+                        )}
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        {b.attractMedia
+                          ? `±${Math.round(b.attractMedia.length / 1024)} KB inline · otomatis dikompres ≤1920px`
+                          : 'Maks 4 MB · otomatis dikompres'}
+                      </Typography>
+                      <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+                        Rekomendasi: <strong>16:9</strong> (landscape 1920×1080) atau <strong>9:16</strong> (portrait 1080×1920). Display cover, semua rasio work.
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Grid>
+
+                {/* ── Icon ───────────────────────────────────── */}
+                <Grid item xs={12} md={6}>
+                  <Box
+                    sx={{
+                      border: '1px solid #ececec',
+                      borderRadius: 2,
+                      overflow: 'hidden',
+                      height: '100%',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      bgcolor: '#fafafa',
+                    }}
+                  >
+                    {/* Preview area */}
+                    <Box
+                      sx={{
+                        flex: 1,
+                        minHeight: 220,
+                        position: 'relative',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexDirection: 'column',
+                        gap: 1.5,
+                        bgcolor: '#f4f4f4',
+                        borderBottom: '1px solid #ececec',
+                      }}
+                    >
+                      {b.attractIcon ? (
+                        <>
+                          <img
+                            src={b.attractIcon}
+                            alt="Icon preview"
+                            style={{
+                              width: 120,
+                              height: 120,
+                              objectFit: 'contain',
+                              background:
+                                'repeating-conic-gradient(#f0f0f0 0% 25%, #fff 0% 50%) 0 0/16px 16px',
+                              borderRadius: 8,
+                            }}
+                          />
+                          <Typography variant="caption" color="text.secondary">
+                            Ikon di tengah layar &quot;Sentuh untuk mulai&quot;
+                          </Typography>
+                        </>
+                      ) : (
+                        <Box sx={{ textAlign: 'center', color: '#bdbdbd' }}>
+                          <Box sx={{ fontSize: 44, mb: 1 }}>👆</Box>
+                          <Typography variant="body2">Belum ada ikon</Typography>
+                          <Typography variant="caption" color="text.disabled">
+                            Gunakan ikon default tap-to-start
+                          </Typography>
+                        </Box>
+                      )}
+                      {attractBusyIcon && (
+                        <Box
+                          sx={{
+                            position: 'absolute', inset: 0,
+                            display: 'flex', flexDirection: 'column', gap: 1,
+                            alignItems: 'center', justifyContent: 'center',
+                            bgcolor: 'rgba(255,255,255,0.85)',
+                          }}
+                        >
+                          <CircularProgress size={32} />
+                          <Typography variant="caption" color="text.secondary">
+                            Memproses ikon…
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+
+                    {/* Controls */}
+                    <Box sx={{ p: 2 }}>
+                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1 }}>
+                        <Button
+                          variant="contained"
+                          component="label"
+                          size="small"
+                          disabled={attractBusyIcon}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          {attractBusyIcon ? 'Memproses…' : 'Upload Ikon'}
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg"
+                            hidden
+                            onChange={handleAttractIconUpload}
+                          />
+                        </Button>
+                        {b.attractIcon && (
+                          <Button
+                            color="error"
+                            variant="outlined"
+                            size="small"
+                            onClick={() => setBranding({ attractIcon: null })}
+                            disabled={attractBusyIcon}
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Reset
+                          </Button>
+                        )}
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        {b.attractIcon
+                          ? `±${Math.round(b.attractIcon.length / 1024)} KB inline · disarankan transparan (PNG)`
+                          : 'Maks 512 KB · PNG transparan disarankan'}
+                      </Typography>
+                      <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+                        Rekomendasi: <strong>1:1 (persegi)</strong>, ideal <strong>256×256</strong> atau <strong>512×512</strong> piksel. Tampil di tengah tombol 720×540 (4:3).
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Grid>
+              </Grid>
+            </Paper>
           </Grid>
 
           {/* ── Save ──────────────────────────────────────────── */}
           <Grid item xs={12}>
             <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-              <Button variant="contained" size="large" startIcon={<SaveIcon />} onClick={confirmUpdatePresetAndSave} disabled={saving}>
+              <Button variant="contained" size="large" startIcon={<SaveIcon />} onClick={confirmUpdatePresetAndSave} disabled={saving || attractBusy}>
                 {saving ? 'Menyimpan…' : 'Simpan'}
               </Button>
               <Button variant="outlined" onClick={load}>Reset</Button>

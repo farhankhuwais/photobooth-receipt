@@ -73,6 +73,7 @@ export default function App() {
   const [armed, setArmed] = useState(false)      // kamera sudah "siap" (tombol Mulai Jepret ditekan)
   const [filter, setFilter] = useState<PhotoFilter>('none')  // filter foto aktif
   // Toggle kotak Capturing dari Settings (branding.showCapturingBox) — gak perlu state lokal.
+  // Background attract di-render langsung dari branding.attractMedia (preset/config inline).
   const [attractMedia, setAttractMedia] = useState<{ type: 'image' | 'video'; url: string } | null>(null)
   const [attractIcon, setAttractIcon] = useState<string | null>(null)
   const stripCanvas = useRef<HTMLCanvasElement | null>(null)
@@ -129,43 +130,9 @@ export default function App() {
   }, [])
 
 
-  // Load background attract untuk mode saat ini (regular/event) dari DB.
-  function loadAttract(m: 'regular' | 'event') {
-    fetch(`/api/attract/${m}`)
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => {
-        if (!b) {
-          if (useSession.getState().mode === m) setAttractMedia(null)
-          return
-        }
-        const url = URL.createObjectURL(b)
-        const isVideo = b.type.startsWith('video/')
-        if (useSession.getState().mode === m) {
-          setAttractMedia({ type: isVideo ? 'video' : 'image', url })
-        }
-      })
-      .catch(() => {})
-  }
-
-  // Load ikon tap custom per mode dari DB.
-  function loadAttractIcon(m: 'regular' | 'event') {
-    fetch(`/api/attract/${m}/icon`)
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => {
-        const url = b ? URL.createObjectURL(b) : null
-        if (useSession.getState().mode === m) setAttractIcon(url)
-      })
-      .catch(() => {})
-  }
-
-  // Reload background + ikon attract setelah diubah di panel Settings.
-
-  // Load attract background + ikon saat mode berubah / boot.
-  useEffect(() => {
-    loadAttract(mode)
-    loadAttractIcon(mode)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode])
+  // Load background attract + icon langsung dari branding (preset/config inline).
+  // Tidak ada fetch ke /api/attract/* lagi — single source of truth = branding.
+  // State attractMedia/attractIcon di-set oleh loadConfig() di bawah saat branding berubah.
 
   // Load gallery frame custom dari DB. Filter per template (?template=) + universal (NULL).
   // Saat template berubah, list di-refresh & frame pertama otomatis dipilih (kalau ada).
@@ -293,6 +260,25 @@ export default function App() {
         if (typeof did === 'string') st.setSelectedDesignId(did)
         if (typeof dc === 'boolean') useSession.setState({ designChosen: dc })
         if (typeof scr === 'string' && (scr === 'attract' || scr === 'booth')) st.setScreen(scr as 'attract' | 'booth')
+
+        // Attract screen media + icon dari branding (preset/config)
+        if ('attractMedia' in branding) {
+          const am = branding.attractMedia
+          if (typeof am === 'string' && am.length > 0) {
+            const isVideo = am.startsWith('data:video') || /^https?:.*\.(mp4|webm|ogg)(\?|$)/i.test(am)
+            setAttractMedia({ type: isVideo ? 'video' : 'image', url: am })
+          } else {
+            setAttractMedia(null)
+          }
+        }
+        if ('attractIcon' in branding) {
+          const ai = branding.attractIcon
+          if (typeof ai === 'string' && ai.length > 0) {
+            setAttractIcon(ai)
+          } else {
+            setAttractIcon(null)
+          }
+        }
       }
     } catch { /* ignore */ }
   }, [])

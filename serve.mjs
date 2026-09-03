@@ -15,7 +15,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs/promises'
-import { initDb, savePhoto, getPhoto, listPhotos, deletePhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveAttract, getAttract, deleteAttract, saveAttractIcon, getAttractIcon, deleteAttractIcon, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign, DEFAULT_TENANT, resolveTenant, pool, checkTierLimit } from './db.mjs'
+import { initDb, savePhoto, getPhoto, listPhotos, deletePhoto, savePreset, listPresets, getPreset, deletePreset, saveTransaction, listTransactions, getStats, verifyAdmin, createSession, getSessionUser, destroySession, changePassword, saveFrame, listFrames, getFrame, deleteFrame, getConfig, saveConfig, saveDesign, listDesigns, getDesign, updateDesign, deleteDesign, DEFAULT_TENANT, resolveTenant, pool, checkTierLimit } from './db.mjs'
 import { adminApi } from './admin-api.mjs'
 // NOTE: License secret is versioned and stored in the database.
 // The process.env.LICENSE_SECRET_KEY env is the source of truth.
@@ -152,7 +152,7 @@ app.get('/u/:id', async (req, res) => {
 })
 
 // Presets — konfigurasi bernama (bisa banyak), tiap preset punya mode sendiri.
-app.post('/api/presets', express.json({ limit: '1mb' }), async (req, res) => {
+app.post('/api/presets', express.json({ limit: '15mb' }), async (req, res) => {
   try {
     if (req.tenantId === 'admin') return res.status(404).end()
     // Tier enforcement: cek batas preset
@@ -193,7 +193,7 @@ app.get('/api/presets/:name', async (req, res) => {
   }
 })
 // Update preset yang sudah ada (by name) — untuk edit tanpa bikin duplikat.
-app.put('/api/presets/:name', express.json({ limit: '1mb' }), async (req, res) => {
+app.put('/api/presets/:name', express.json({ limit: '15mb' }), async (req, res) => {
   try {
     const oldName = req.params.name
     const { mode, price, branding } = req.body || {}
@@ -503,81 +503,6 @@ app.get('/api/designs/:id/frame', async (req, res) => {
 app.delete('/api/designs/:id', async (req, res) => {
   try {
     await deleteDesign(req.params.id, req.tenantId)
-    res.json({ ok: true })
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-
-// ── Attract background (image/video) per mode, disimpan di DB ──
-// Upload/simpan background untuk mode tertentu (regular/event).
-app.post('/api/attract/:mode', upload.single('media'), async (req, res) => {
-  try {
-    const mode = req.params.mode === 'event' ? 'event' : 'regular'
-    if (!req.file) return res.status(400).json({ error: 'no media' })
-    const mt = req.file.mimetype || 'application/octet-stream'
-    if (!/^image\//.test(mt) && !/^video\//.test(mt)) {
-      return res.status(400).json({ error: 'hanya image/video' })
-    }
-    await saveAttract(mode, mt, req.file.buffer, req.tenantId)
-    res.json({ ok: true, mode, mediaType: mt })
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-// Ambil blob background untuk mode tertentu.
-app.get('/api/attract/:mode', async (req, res) => {
-  try {
-    const mode = req.params.mode === 'event' ? 'event' : 'regular'
-    const row = await getAttract(mode, req.tenantId)
-    if (!row) return res.status(404).end()
-    res.set('Content-Type', row.media_type)
-    res.set('Cache-Control', 'public, max-age=31536000, immutable')
-    res.send(row.data)
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-// Hapus background mode tertentu.
-app.delete('/api/attract/:mode', async (req, res) => {
-  try {
-    const mode = req.params.mode === 'event' ? 'event' : 'regular'
-    await deleteAttract(mode, req.tenantId)
-    res.json({ ok: true })
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-
-// ── Attract tap icon (custom PNG per mode) ──
-app.post('/api/attract/:mode/icon', upload.single('image'), async (req, res) => {
-  try {
-    const mode = req.params.mode === 'event' ? 'event' : 'regular'
-    if (!req.file) return res.status(400).json({ error: 'no image' })
-    const mt = req.file.mimetype || 'image/png'
-    if (!/^image\//.test(mt)) return res.status(400).json({ error: 'hanya image' })
-    await saveAttractIcon(mode, mt, req.file.buffer, req.tenantId)
-    res.json({ ok: true, mode, mediaType: mt })
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-app.get('/api/attract/:mode/icon', async (req, res) => {
-  try {
-    const mode = req.params.mode === 'event' ? 'event' : 'regular'
-    const row = await getAttractIcon(mode, req.tenantId)
-    if (!row) return res.status(404).end()
-    res.set('Content-Type', row.media_type)
-    res.set('Cache-Control', 'public, max-age=31536000, immutable')
-    res.send(row.data)
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-app.delete('/api/attract/:mode/icon', async (req, res) => {
-  try {
-    const mode = req.params.mode === 'event' ? 'event' : 'regular'
-    await deleteAttractIcon(mode, req.tenantId)
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: String(e) })
