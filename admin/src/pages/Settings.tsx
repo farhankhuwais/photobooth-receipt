@@ -816,6 +816,8 @@ export default function Settings() {
                         maxWidth: '100%',
                         height: 'auto',
                         imageRendering: 'auto',
+                        marginLeft: 'auto',
+                        marginRight: 'auto',
                       }}
                     />
                   </Box>
