@@ -144,14 +144,18 @@ async function renderStrukPreview(
   const gapY = template === 'grid2x2' ? (b.photoGap2x2Y ?? 20) : (b.photoGap ?? 20)
   const sidePad = 20
 
-  const innerW = W - sidePad * 2
-  let shotW = innerW
+  // Scale semua dimensi ke preview (1/3)
+  const _h = (px: number) => px * s
+  const sSP = _h(sidePad)
+  const sGX = _h(gapX)
+  const sInnerW = W - sSP * 2
+  let shotW = sInnerW
   let shotH = Math.round(shotW * 0.75)
   let cols = 1
   let rows: number
   if (template === 'grid2x2') {
     cols = 2
-    shotW = (innerW - gapX) / 2
+    shotW = (sInnerW - sGX) / 2
     shotH = Math.round(shotW * 0.75)
     rows = 2
   } else if (template === 'dual') {
@@ -162,18 +166,13 @@ async function renderStrukPreview(
     // strip3
     rows = 3
   }
-  const contentH = rows * shotH + (rows - 1) * gapY
-
-  // Scale semua dimensi ke preview (1/3)
-  const _h = (px: number) => px * s
+  const contentH = rows * shotH + (rows - 1) * _h(gapY)
   const sH = _h(headerH)
   const sTP = _h(topPad)
   const sBP = _h(bottomPad)
-  const sGX = _h(gapX)
   const sGY = _h(gapY)
   const sSW = _h(shotW)
   const sSH = _h(shotH)
-  const sSP = _h(sidePad)
   const sFH = _h(footerH)
   const sContentH = _h(contentH)
 
