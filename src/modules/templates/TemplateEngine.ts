@@ -118,17 +118,17 @@ export interface DesignDef {
   slots: DesignSlot[]       // dalam koordinat PRINT_WIDTH (576 lebar)
 }
 
-// Gambar satu foto ke slot (bisa diputar). cover-fit ke dalam w x h.
+// Gambar satu foto ke slot (cover-fit, tanpa rotasi — slot selalu lurus).
 function drawSlot(
   ctx: CanvasRenderingContext2D,
   img: HTMLImageElement,
   s: DesignSlot
 ) {
-  const rot = s.rot || 0
   ctx.save()
   ctx.translate(s.x + s.w / 2, s.y + s.h / 2)
-  if (rot) ctx.rotate((rot * Math.PI) / 180)
-  // clip ke kotak slot biar foto nggak tumpah kalau miring/cover.
+  // Rotasi slot di-nonaktifkan supaya hasil cetak selalu lurus & centered.
+  // Jika nanti butuh efek miring lagi, kembalikan baris bawah.
+  // if (s.rot) ctx.rotate((s.rot * Math.PI) / 180)
   ctx.beginPath()
   ctx.rect(-s.w / 2, -s.h / 2, s.w, s.h)
   ctx.clip()
