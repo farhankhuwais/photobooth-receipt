@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Box, Paper, Typography, Alert, MenuItem, TextField, Button, Snackbar,
   CircularProgress, Grid, FormControl, InputLabel, Select, Slider, FormControlLabel, Checkbox,
   Dialog, DialogTitle, DialogContent, DialogActions,
+  ToggleButtonGroup, ToggleButton,
 } from '@mui/material'
 import SaveIcon from '@mui/icons-material/Save'
 import { api } from '@/api/client'
@@ -64,6 +65,212 @@ async function compressImage(
   })
 }
 
+// ── Struk preview render (canvas) ────────────────────────────
+// Render mini struk pakai algoritma yang sama dengan TemplateEngine, diskala
+// 1:3 agar muat di admin panel. Pakai foto placeholder abu-abu (bukan foto
+// sungguhan) — tujuan preview bukan WYSIWYG hasil jepretan, tapi cek layout
+// & konflik elemen (logo + event name + header text bentrik?).
+const STRUK_PREVIEW_WIDTH = 192 // 1/3 dari 576 (PRINT_WIDTH)
+const STRUK_PREVIEW_SCALE = STRUK_PREVIEW_WIDTH / 576
+
+function loadImageSafe(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+}
+
+function makePlaceholderImg(w: number, h: number, label: string): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const ctx = c.getContext('2d')!
+  // Gradient vertikal (placeholder foto, tidak mempengaruhi branding)
+  const grad = ctx.createLinearGradient(0, 0, 0, h)
+  grad.addColorStop(0, '#cfd8dc')
+  grad.addColorStop(1, '#90a4ae')
+  ctx.fillStyle = grad
+  ctx.fillRect(0, 0, w, h)
+  // Bingkai tipis biar slot keliatan jelas
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)'
+  ctx.lineWidth = 1
+  ctx.strokeRect(0.5, 0.5, w - 1, h - 1)
+  ctx.fillStyle = '#37474f'
+  ctx.font = `bold ${Math.round(Math.min(w, h) * 0.16)}px sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, w / 2, h / 2)
+  return c
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Preview render — MIRROR PERSIS algoritma TemplateEngine.composeStrip()
+// di src/modules/templates/TemplateEngine.ts. Preview diskala 1:3 dari
+// PRINT_WIDTH=576 ke STRUK_PREVIEW_WIDTH=192. Foto asli diganti placeholder
+// (atau sampleDataUrl jika ada). Frame (drawFrame) tidak di-preview karena
+// customer pilih frame di booth, bukan dari branding setting.
+//
+// Kalau TemplateEngine diubah, fungsi ini HARUS ikut di-update. Lihat
+// composeStrip di line ~220 TemplateEngine.ts untuk reference.
+// ────────────────────────────────────────────────────────────────────
+async function renderStrukPreview(
+  canvas: HTMLCanvasElement,
+  b: Branding,
+  template: 'single' | 'dual' | 'strip3' | 'grid2x2',
+  onRendered?: (h: number) => void
+) {
+  const ctx = canvas.getContext('2d')!
+  const W = STRUK_PREVIEW_WIDTH // 192 (setara PRINT_WIDTH=576 di scale 1:3)
+  const s = STRUK_PREVIEW_SCALE // 1/3
+
+  // ── Match TemplateEngine.composeStrip (line 220–367) ─────────────
+  // Header H: kalau ada eventName (below-logo) + logo → butuh space ekstra +42px
+  // supaya event name tidak menumpuk dengan logo. Rumus SAMA dengan TemplateEngine.
+  const hasBelowLogoEventName = !!(b.eventName && b.showEventNameOnPrint)
+  const baseH = b.logoDataUrl ? 266 : 64
+  const headerH = baseH + (b.logoDataUrl && hasBelowLogoEventName ? 42 : 0)
+  let footerH = 12
+  if (b.showDate) footerH += 34
+  if (b.watermark) footerH += 44
+  footerH += 10
+  if (footerH < (b.watermark ? 56 : 48)) footerH = b.watermark ? 56 : 48
+
+  // Padding
+  const topPad = (b.photoTopPad ?? 24)
+  const bottomPad = (b.photoBottomPad ?? 24)
+  const gapX = template === 'grid2x2' ? (b.photoGap2x2X ?? 20) : (b.photoGap ?? 20)
+  const gapY = template === 'grid2x2' ? (b.photoGap2x2Y ?? 20) : (b.photoGap ?? 20)
+  const sidePad = 20
+
+  const innerW = W - sidePad * 2
+  let shotW = innerW
+  let shotH = Math.round(shotW * 0.75)
+  let cols = 1
+  let rows: number
+  if (template === 'grid2x2') {
+    cols = 2
+    shotW = (innerW - gapX) / 2
+    shotH = Math.round(shotW * 0.75)
+    rows = 2
+  } else if (template === 'dual') {
+    rows = 2
+  } else if (template === 'single') {
+    rows = 1
+  } else {
+    // strip3
+    rows = 3
+  }
+  const contentH = rows * shotH + (rows - 1) * gapY
+
+  // Scale semua dimensi ke preview (1/3)
+  const _h = (px: number) => px * s
+  const sH = _h(headerH)
+  const sTP = _h(topPad)
+  const sBP = _h(bottomPad)
+  const sGX = _h(gapX)
+  const sGY = _h(gapY)
+  const sSW = _h(shotW)
+  const sSH = _h(shotH)
+  const sSP = _h(sidePad)
+  const sFH = _h(footerH)
+  const sContentH = _h(contentH)
+
+  const totalH = Math.round(sH + sTP + sContentH + sBP + sFH)
+  canvas.width = W
+  canvas.height = totalH
+  onRendered?.(totalH)
+
+  // Background
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, W, totalH)
+
+  // Header
+  ctx.fillStyle = '#000000'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const logo = b.logoDataUrl ? await loadImageSafe(b.logoDataUrl) : null
+  if (logo) {
+    // Kotak logo max 250px di resolusi asli → diskala
+    const pad = _h(4)
+    const box = Math.min(sH - pad * 2, _h(250))
+    const lx = (W - box) / 2
+    const ly = (sH - box) / 2
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(lx, ly, box, box)
+    // contain
+    const ar = logo.width / logo.height
+    let dw = box
+    let dh = box
+    if (ar > 1) dh = box / ar
+    else dw = box * ar
+    ctx.drawImage(logo, lx + (box - dw) / 2, ly + (box - dh) / 2, dw, dh)
+    // Event name di bawah logo (hanya jika posisi = 'below-logo' atau tidak diset)
+    if (b.eventName && b.showEventNameOnPrint && b.eventNamePosition !== 'footer') {
+      ctx.fillStyle = '#000000'
+      const fontSize = _h(24)
+      ctx.font = `bold ${fontSize}px sans-serif`
+      ctx.textBaseline = 'alphabetic'
+      // Y = logoBottom + gap (visual, default 14) + fontSize
+      // supaya text tidak menumpuk dengan logo. Setting `eventNameGapBelowLogo`
+      // admin-controlled. Konsisten dengan TemplateEngine.composeStrip.
+      const gap = (b.eventNameGapBelowLogo ?? 14) * s
+      const eventY = ly + dh + gap + fontSize
+      ctx.fillText(b.eventName, W / 2, eventY)
+    }
+  } else {
+    // TANPA LOGO: TemplateEngine hanya render eventName (headerText diabaikan!)
+    // Sesuai TemplateEngine line 308-309. Kalau mau render headerText juga, edit
+    // TemplateEngine dulu, lalu update sini.
+    if (b.eventName && b.showEventNameOnPrint) {
+      ctx.font = `bold ${_h(30)}px sans-serif`
+      ctx.fillText(b.eventName, W / 2, sH / 2)
+    }
+  }
+
+  // Body — placeholder foto
+  let i = 0
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = sSP + c * (sSW + sGX)
+      const y = sH + sTP + r * (sSH + sGY)
+      const ph = makePlaceholderImg(Math.max(1, Math.round(sSW)), Math.max(1, Math.round(sSH)), `${i + 1}`)
+      ctx.drawImage(ph, x, y, sSW, sSH)
+      i++
+    }
+  }
+
+  // Footer
+  const fy = sH + sTP + sContentH + sBP
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#000000'
+  let cursorY = fy + _h(10)
+  // QR tidak lagi dicetak di struk — preview hanya render tanggal + watermark.
+  if (b.showDate) {
+    ctx.font = `${_h(18)}px sans-serif`
+    ctx.fillText(new Date().toLocaleString('id-ID'), W / 2, cursorY + _h(18))
+    cursorY += _h(34)
+  }
+  if (b.watermark) {
+    ctx.font = `${_h(15)}px sans-serif`
+    ctx.fillStyle = '#000000'
+    // Selalu di jalur terbawah (44px → _h(44) di preview)
+    ctx.fillText(b.watermark, W / 2, totalH - _h(22))
+  }
+
+  // Event name di posisi footer (jika eventNamePosition='footer')
+  if (b.eventName && b.showEventNameOnPrint && b.eventNamePosition === 'footer') {
+    // Taruh di atas watermark
+    const evtY = totalH - _h(b.watermark ? 64 : 20)
+    ctx.font = `bold ${_h(18)}px sans-serif`
+    ctx.fillStyle = '#000000'
+    ctx.fillText(b.eventName, W / 2, evtY)
+  }
+  // footerText TIDAK di-render di TemplateEngine.composeStrip (cuma di preview lawas)
+  // Jadi skip di sini juga.
+}
+
 function validateFile(file: File, maxBytes: number, label: string): string | null {
   if (file.size > maxBytes) {
     const mb = (file.size / 1024 / 1024).toFixed(2)
@@ -88,8 +295,10 @@ interface Branding {
   // Layout
   showDate?: boolean
   showEventNameOnPrint?: boolean
+  eventNamePosition?: 'below-logo' | 'footer' // 'below-logo' (default) atau 'footer' (hindari bentrokan dkk)
+  eventNameGapBelowLogo?: number // Jarak event name ke logo (px). Default 6, range 0-40
   showCapturingBox?: boolean
-  qrText?: string
+  // QR struk dihapus — QR tidak lagi dicetak, hanya tombol QR di app.
   photoTopPad?: number
   photoBottomPad?: number
   photoGap?: number
@@ -132,6 +341,7 @@ export default function Settings() {
   }, [tenantSlug])
   useEffect(() => { if (tenantSlug) loadPresetList() }, [loadPresetList])
   const [presetDialogOpen, setPresetDialogOpen] = useState(false)
+  const [logoModalOpen, setLogoModalOpen] = useState(false)
   const [presetSaving, setPresetSaving] = useState(false)
   const [presetEditing, setPresetEditing] = useState<{ name: string; mode: 'regular' | 'event'; price: number } | null>(null)
   const [presetDraft, setPresetDraft] = useState({ name: '', mode: 'regular' as 'regular' | 'event', price: 5000 })
@@ -140,6 +350,14 @@ export default function Settings() {
   const [updatePresetName, setUpdatePresetName] = useState<string | null>(null)
   const [attractBusy, setAttractBusy] = useState(false)
   const [attractBusyIcon, setAttractBusyIcon] = useState(false)
+  // Layout struk preview mode (strip vertikal atau grid 2x2). Default 'strip'
+  // karena lebih umum dipakai; user bisa switch untuk lihat efek jarak X/Y.
+  // Template mode: 'single' | 'dual' | 'strip3' | 'grid2x2' — SAMA dengan TemplateEngine
+  // supaya preview identik dengan hasil cetak. Default 'strip3' (3 foto) karena
+  // paling sering dipakai di booth.
+  const [templateMode, setTemplateMode] = useState<'single' | 'dual' | 'strip3' | 'grid2x2'>('strip3')
+  // Canvas ref untuk render preview struk
+  const strukCanvasRef = useRef<HTMLCanvasElement>(null)
 
   // Auto-set initial tenant
   useEffect(() => {
@@ -178,6 +396,15 @@ export default function Settings() {
   }, [tenantSlug])
 
   useEffect(() => { if (tenantSlug) load() }, [load])
+
+  // Re-render struk preview setiap branding atau template berubah
+  useEffect(() => {
+    const canvas = strukCanvasRef.current
+    if (!canvas) return
+    renderStrukPreview(canvas, form.branding, templateMode).catch((e) => {
+      console.warn('Struk preview render error:', e)
+    })
+  }, [form.branding, templateMode])
 
   const setBranding = (patch: Partial<Branding>) =>
     setForm((f) => ({ ...f, branding: { ...f.branding, ...patch } }))
@@ -521,14 +748,100 @@ export default function Settings() {
             </Paper>
           </Grid>
 
-          {/* ── Kanan: Branding & Layout ──────────────────────── */}
           <Grid item xs={12} md={6}>
-            <Paper sx={{ p: 3 }}>
-              <Typography variant="h6" fontWeight={600} gutterBottom>Branding</Typography>
-              <Grid container spacing={2}>
+            <Paper sx={{ p: 3, mt: 2 }}>
+              {/* ── Branding fields ──────────────────────────────── */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
+                <Box
+                  sx={{
+                    width: 34, height: 34, borderRadius: 1.5,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    bgcolor: 'rgba(25,118,210,0.08)', color: 'primary.main',
+                  }}
+                >
+                  <span style={{ fontSize: 20, lineHeight: 1 }}>🎨</span>
+                </Box>
+                <Box>
+                  <Typography variant="h6" fontWeight={600} lineHeight={1.2}>
+                    Branding &amp; Layout Struk
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Logo, teks, warna, layout struk &amp; template dalam satu tempat
+                  </Typography>
+                </Box>
+              </Box>
+
+              {/* ── Visual Preview ──────────────────────────── */}
+              <Box sx={{ mt: 2, p: 2, bgcolor: '#f7f7f7', borderRadius: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5, flexWrap: 'wrap' }}>
+                  <Typography variant="body2" fontWeight={500}>
+                    Template
+                  </Typography>
+                  <ToggleButtonGroup
+                    size="small"
+                    exclusive
+                    value={templateMode}
+                    onChange={(_, v) => v && setTemplateMode(v)}
+                    sx={{ ml: 1 }}
+                  >
+                    <ToggleButton value="single" sx={{ textTransform: 'none', px: 1.5, py: 0.25, fontSize: 12 }}>
+                      1 Foto
+                    </ToggleButton>
+                    <ToggleButton value="dual" sx={{ textTransform: 'none', px: 1.5, py: 0.25, fontSize: 12 }}>
+                      2 Foto
+                    </ToggleButton>
+                    <ToggleButton value="strip3" sx={{ textTransform: 'none', px: 1.5, py: 0.25, fontSize: 12 }}>
+                      Strip 3
+                    </ToggleButton>
+                    <ToggleButton value="grid2x2" sx={{ textTransform: 'none', px: 1.5, py: 0.25, fontSize: 12 }}>
+                      Grid 2×2
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'center', overflow: 'auto' }}>
+                  <Box
+                    sx={{
+                      border: '1px solid #d0d0d0',
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.10)',
+                      bgcolor: '#fafafa',
+                      p: 1.5,
+                      borderRadius: 1,
+                    }}
+                  >
+                    <canvas
+                      ref={strukCanvasRef}
+                      data-testid="struk-preview"
+                      style={{
+                        display: 'block',
+                        width: STRUK_PREVIEW_WIDTH,
+                        maxWidth: '100%',
+                        height: 'auto',
+                        imageRendering: 'auto',
+                      }}
+                    />
+                  </Box>
+                </Box>
+                <Typography variant="caption" color="text.disabled" sx={{ display: 'block', textAlign: 'center', mt: 1.5 }}>
+                  Preview diskala 1:4 (lebar cetak 58mm = 576px). Nilai {`{...}`} px berlaku pada struk asli.
+                </Typography>
+              </Box>
+
+              {/* Separator: Branding & Layout Settings (logo, text, jarak) */}
+              <Box sx={{ mt: 3, mb: 1, borderTop: '1px solid #e0e0e0', pt: 2 }}>
+                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                  Branding &amp; Pengaturan
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Logo, teks brand, warna, dan jarak antar foto
+                </Typography>
+              </Box>
+
+              {/* ── Branding fields (logo, text, colors) ──────────── */}
+              <Grid container spacing={2} sx={{ mt: 1 }}>
                 <Grid item xs={12}>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexDirection: 'column' }}>
-                    <Button variant="outlined" component="label" size="small">
+                  {/* Logo upload + thumbnail (klik untuk full screen) */}
+                  <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Button variant="outlined" component="label" size="small" startIcon={<span>📷</span>}>
                       Upload Logo
                       <input type="file" accept="image/*" hidden onChange={(e) => {
                         const file = e.target.files?.[0]
@@ -541,36 +854,50 @@ export default function Settings() {
                       }} />
                     </Button>
                     {b.logoDataUrl && (
-                      <Box sx={{ width: '100%', maxWidth: 200, border: '1px solid #ccc', p: 1 }}>
-                        <img src={b.logoDataUrl} alt="Logo preview" style={{ width: '100%', height: 'auto' }} />
+                      <Box
+                        onClick={() => setLogoModalOpen(true)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setLogoModalOpen(true) }}
+                        sx={{
+                          width: 80, height: 80, cursor: 'pointer',
+                          border: '1px solid #d0d0d0', borderRadius: 1,
+                          overflow: 'hidden', flexShrink: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          bgcolor: '#fafafa',
+                          transition: 'border-color 0.15s, transform 0.15s',
+                          '&:hover': { borderColor: 'primary.main', transform: 'scale(1.04)' },
+                          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 2 },
+                        }}
+                        title="Klik untuk lihat full screen"
+                      >
+                        <img
+                          src={b.logoDataUrl}
+                          alt="Logo"
+                          style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                        />
                       </Box>
                     )}
                     {b.logoDataUrl && (
-                      <Button color="error" size="small" onClick={() => setBranding({ logoDataUrl: '' })}>Hapus Logo</Button>
+                      <Button color="error" size="small" onClick={() => setBranding({ logoDataUrl: '' })}>
+                        Hapus Logo
+                      </Button>
+                    )}
+                    {b.logoDataUrl && (
+                      <Typography variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                        Klik thumbnail untuk lihat full screen
+                      </Typography>
                     )}
                   </Box>
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField fullWidth label="Header Text" value={b.headerText || ''} size="small"
-                    onChange={(e) => setBranding({ headerText: e.target.value })}
-                    placeholder="Photobooth ACHIPIX"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField fullWidth label="Footer Text" value={b.footerText || ''} size="small"
-                    onChange={(e) => setBranding({ footerText: e.target.value })}
-                    placeholder="Terima kasih!"
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
                   <TextField fullWidth label="Nama Event" value={b.eventName || ''} size="small"
                     onChange={(e) => setBranding({ eventName: e.target.value })}
-                    placeholder="Wedding Anto & Sari"
+                    helperText="Ditampilkan di header/footer struk"
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    fullWidth label="Warna Utama" value={b.primaryColor || ''} size="small"
+                  <TextField fullWidth label="Warna Utama (primary)" value={b.primaryColor || ''} size="small"
                     onChange={(e) => setBranding({ primaryColor: e.target.value })}
                     placeholder="#1976d2"
                     InputProps={{
@@ -580,76 +907,157 @@ export default function Settings() {
                     }}
                   />
                 </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth label="Header Teks (merek)" value={b.headerText || ''} size="small"
+                    onChange={(e) => setBranding({ headerText: e.target.value })}
+                    placeholder="ACARA"
+                    helperText="Tampil di header struk saat tidak ada logo"
+                  />
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <TextField fullWidth label="Footer Teks" value={b.footerText || ''} size="small"
+                    onChange={(e) => setBranding({ footerText: e.target.value })}
+                    placeholder="Terima kasih!"
+                  />
+                </Grid>
                 <Grid item xs={12}>
-                  <TextField fullWidth label="Watermark / Teks di hasil foto" value={b.watermark || ''} size="small"
+                  <TextField fullWidth label="Watermark" value={b.watermark || ''} size="small"
                     onChange={(e) => setBranding({ watermark: e.target.value })}
                     placeholder="Powered by @Achipix.id!"
                   />
                 </Grid>
                 <Grid item xs={12}>
-                  <TextField fullWidth label="URL QR Code" value={b.qrText || ''} size="small"
-                    onChange={(e) => setBranding({ qrText: e.target.value })}
-                    placeholder="https://instagram.com/achipix"
-                    helperText="Kosongkan untuk nonaktifkan QR di struk"
-                  />
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 1 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={!!b.showDate}
+                          onChange={(e) => setBranding({ showDate: e.target.checked })}
+                          size="small"
+                        />
+                      }
+                      label="Tampilkan tanggal di hasil"
+                    />
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={!!b.showEventNameOnPrint}
+                          onChange={(e) => setBranding({ showEventNameOnPrint: e.target.checked })}
+                          size="small"
+                        />
+                      }
+                      label="Tampilkan nama event di hasil"
+                    />
+                    <FormControl
+                      fullWidth
+                      size="small"
+                      disabled={!b.showEventNameOnPrint}
+                      sx={{ mt: 0.5 }}
+                    >
+                      <InputLabel id="event-name-position-label">Posisi Nama Event</InputLabel>
+                      <Select
+                        labelId="event-name-position-label"
+                        label="Posisi Nama Event"
+                        value={b.eventNamePosition || 'below-logo'}
+                        onChange={(e) => setBranding({ eventNamePosition: e.target.value as 'below-logo' | 'footer' })}
+                      >
+                        <MenuItem value="below-logo">Di bawah logo</MenuItem>
+                        <MenuItem value="footer">Di footer (bawah foto)</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {/* Jarak event name ke logo (hanya aktif saat posisi = below-logo) */}
+                    <Box sx={{ mt: 0.5 }}>
+                      <TextField
+                        fullWidth
+                        type="number"
+                        size="small"
+                        label="Jarak Nama Event ke Logo (px)"
+                        value={b.eventNameGapBelowLogo ?? 14}
+                        onChange={(e) => setBranding({ eventNameGapBelowLogo: Number(e.target.value) })}
+                        inputProps={{ min: 0, max: 80, step: 2 }}
+                        helperText={`Preview: ${b.eventNameGapBelowLogo ?? 14}px jarak visual antara logo & nama event`}
+                        disabled={!b.showEventNameOnPrint || b.eventNamePosition === 'footer'}
+                        sx={(!b.showEventNameOnPrint || b.eventNamePosition === 'footer') ? { '& .MuiInputBase-input': { color: 'text.disabled' } } : {}}
+                      />
+                    </Box>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={!!b.showCapturingBox}
+                          onChange={(e) => setBranding({ showCapturingBox: e.target.checked })}
+                          size="small"
+                        />
+                      }
+                      label="Tampilkan kotak capturing (lingkaran capture area)"
+                    />
+                  </Box>
                 </Grid>
               </Grid>
-            </Paper>
 
-            <Paper sx={{ p: 3, mt: 2 }}>
-              <Typography variant="h6" fontWeight={600} gutterBottom>Layout Struk</Typography>
-              <Grid container spacing={2}>
+
+              {/* ── Form input ──────────────────────────────── */}
+              <Grid container spacing={2} sx={{ mt: 1 }}>
                 <Grid item xs={12} sm={4}>
-                  <TextField fullWidth type="number" label="Jarak Atas (px)" value={b.photoTopPad ?? 20} size="small"
+                  <TextField fullWidth type="number" label="Jarak Atas (px)" value={b.photoTopPad ?? 24} size="small"
                     onChange={(e) => setBranding({ photoTopPad: Number(e.target.value) })}
                     inputProps={{ min: 0, max: 400, step: 4 }}
+                    helperText={`Preview: ${b.photoTopPad ?? 24}px di atas foto`}
                   />
                 </Grid>
                 <Grid item xs={12} sm={4}>
-                  <TextField fullWidth type="number" label="Jarak Bawah (px)" value={b.photoBottomPad ?? 20} size="small"
+                  <TextField fullWidth type="number" label="Jarak Bawah (px)" value={b.photoBottomPad ?? 24} size="small"
                     onChange={(e) => setBranding({ photoBottomPad: Number(e.target.value) })}
                     inputProps={{ min: 0, max: 400, step: 4 }}
+                    helperText={`Preview: ${b.photoBottomPad ?? 24}px di bawah foto`}
                   />
                 </Grid>
                 <Grid item xs={12} sm={4}>
                   <TextField fullWidth type="number" label="Jarak Antar Foto (px)" value={b.photoGap ?? 20} size="small"
                     onChange={(e) => setBranding({ photoGap: Number(e.target.value) })}
                     inputProps={{ min: 0, max: 200, step: 2 }}
+                    helperText={`Preview: ${b.photoGap ?? 20}px (khusus Strip & 2 Foto)`}
+                    disabled={templateMode === 'grid2x2' || templateMode === 'single'}
+                    sx={(templateMode === 'grid2x2' || templateMode === 'single') ? { '& .MuiInputBase-input': { color: 'text.disabled' } } : {}}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField fullWidth type="number" label="Jarak 2×2 X (px)" value={b.photoGap2x2X ?? 10} size="small"
+                  <TextField fullWidth type="number" label="Jarak 2×2 X (px)" value={b.photoGap2x2X ?? 20} size="small"
                     onChange={(e) => setBranding({ photoGap2x2X: Number(e.target.value) })}
                     inputProps={{ min: 0, max: 200, step: 2 }}
+                    helperText={`Preview: ${b.photoGap2x2X ?? 20}px horizontal (khusus Grid 2×2)`}
+                    disabled={templateMode !== 'grid2x2'}
+                    sx={templateMode !== 'grid2x2' ? { '& .MuiInputBase-input': { color: 'text.disabled' } } : {}}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField fullWidth type="number" label="Jarak 2×2 Y (px)" value={b.photoGap2x2Y ?? 10} size="small"
+                  <TextField fullWidth type="number" label="Jarak 2×2 Y (px)" value={b.photoGap2x2Y ?? 20} size="small"
                     onChange={(e) => setBranding({ photoGap2x2Y: Number(e.target.value) })}
                     inputProps={{ min: 0, max: 200, step: 2 }}
+                    helperText={`Preview: ${b.photoGap2x2Y ?? 20}px vertikal (khusus Grid 2×2)`}
+                    disabled={templateMode !== 'grid2x2'}
+                    sx={templateMode !== 'grid2x2' ? { '& .MuiInputBase-input': { color: 'text.disabled' } } : {}}
                   />
                 </Grid>
                 <Grid item xs={12}>
-                  <FormControlLabel
-                    control={<Checkbox checked={!!b.showDate} onChange={(e) => setBranding({ showDate: e.target.checked })} size="small" />}
-                    label="Tampilkan tanggal di hasil"
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <FormControlLabel
-                    control={<Checkbox checked={!!b.showEventNameOnPrint} onChange={(e) => setBranding({ showEventNameOnPrint: e.target.checked })} size="small" />}
-                    label="Tampilkan nama event di hasil"
-                  />
-                </Grid>
-                <Grid item xs={12}>
-                  <FormControlLabel
-                    control={<Checkbox checked={!!b.showCapturingBox} onChange={(e) => setBranding({ showCapturingBox: e.target.checked })} size="small" />}
-                    label="Tampilkan kotak capturing (lingkaran capture area)"
-                  />
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={!!b.showCapturingBox}
+                          onChange={(e) => setBranding({ showCapturingBox: e.target.checked })}
+                          size="small"
+                        />
+                      }
+                      label="Tampilkan kotak capturing (lingkaran capture area)"
+                    />
+                  </Box>
                 </Grid>
               </Grid>
             </Paper>
+          </Grid>
 
+
+          <Grid item xs={12} md={6}>
             {/* ── Layar Awal (Attract) ─────────────────────────── */}
             <Paper sx={{ p: 3, mt: 2, border: '1px solid #e3e3e3' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
@@ -917,6 +1325,58 @@ export default function Settings() {
       {updatePresetConfirm}
 
       {presetDialog}
+
+      {/* Logo full-screen modal (klik thumbnail di branding) */}
+      <Dialog
+        open={logoModalOpen}
+        onClose={() => setLogoModalOpen(false)}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{
+          sx: { bgcolor: 'rgba(0,0,0,0.92)', boxShadow: 'none' },
+        }}
+      >
+        <DialogTitle sx={{ color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Logo Preview</span>
+          <Button
+            size="small"
+            onClick={() => setLogoModalOpen(false)}
+            sx={{ color: '#fff', minWidth: 'auto' }}
+          >
+            ✕ Tutup
+          </Button>
+        </DialogTitle>
+        <DialogContent
+          sx={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            minHeight: { xs: 300, sm: 500, md: 600 },
+            p: 3, bgcolor: '#fafafa',
+            backgroundImage: b.logoDataUrl
+              ? 'linear-gradient(45deg, #e0e0e0 25%, transparent 25%), linear-gradient(-45deg, #e0e0e0 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e0e0e0 75%), linear-gradient(-45deg, transparent 75%, #e0e0e0 75%)'
+              : 'none',
+            backgroundSize: '20px 20px',
+            backgroundPosition: '0 0, 0 10px, 10px -10px, 10px 0px',
+          }}
+        >
+          {b.logoDataUrl ? (
+            <img
+              src={b.logoDataUrl}
+              alt="Logo full screen"
+              style={{
+                maxWidth: '100%', maxHeight: '70vh',
+                objectFit: 'contain',
+              }}
+            />
+          ) : (
+            <Typography variant="body2" color="text.disabled">Tidak ada logo</Typography>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ bgcolor: 'rgba(0,0,0,0.92)', justifyContent: 'center', pb: 2 }}>
+          <Button onClick={() => setLogoModalOpen(false)} variant="outlined" sx={{ color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>
+            Tutup (Esc)
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar open={!!snack} autoHideDuration={3000} onClose={() => setSnack('')} message={snack} />
     </Box>

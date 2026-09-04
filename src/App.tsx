@@ -56,7 +56,7 @@ export default function App() {
   }
 
   const { videoRef, error } = useCamera()
-  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, design, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay } = useSession()
+  const { shots, template, shotCount, branding, frames, selectedFrameId, designs, selectedDesignId, designChosen, design, mode, price, status, digitalUrl, screen, paid, payStage, cashConfirm, addShot, setBranding, setSelectedFrameId, resetShots, enterBooth, goAttract, openPay, closePay, chooseCash, confirmCashPaid, payQrisSim, resetPay, activePresetName } = useSession()
   const [countdown, setCountdown] = useState<number | null>(null)
   const [stripUrl, setStripUrl] = useState<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)  // live preview hasil saat capturing (mockup + slot)
@@ -229,7 +229,9 @@ export default function App() {
   // Load active config dari DB saat boot + polling agar setting admin selalu ikut.
   const loadConfig = useCallback(async () => {
     try {
-      const r = await fetch('/api/config')
+      // Tambah cache-buster query agar response selalu fresh,
+      // meskipun server sudah kirim cache-control: no-cache.
+      const r = await fetch('/api/config?t=' + Date.now())
       if (!r.ok) return
       const cfg = await r.json()
       const st = useSession.getState()
@@ -244,9 +246,7 @@ export default function App() {
         } catch { /* ignore */ }
       }
       if (branding) {
-        // Admin config adalah source of truth, replace seluruh branding dari preset/config
         useSession.setState({ branding: { ...branding } })
-
         const tpl = typeof branding.template === 'string' ? branding.template : null
         const sc = typeof branding.shotCount === 'number' ? branding.shotCount : null
         const fid = typeof branding.selectedFrameId === 'string' ? branding.selectedFrameId : null
@@ -261,7 +261,7 @@ export default function App() {
         if (typeof dc === 'boolean') useSession.setState({ designChosen: dc })
         if (typeof scr === 'string' && (scr === 'attract' || scr === 'booth')) st.setScreen(scr as 'attract' | 'booth')
 
-        // Attract screen media + icon dari branding (preset/config)
+        // Attract screen media + icon dari branding (preset/config inline)
         if ('attractMedia' in branding) {
           const am = branding.attractMedia
           if (typeof am === 'string' && am.length > 0) {
@@ -285,7 +285,7 @@ export default function App() {
 
   useEffect(() => {
     loadConfig()
-    const iv = setInterval(loadConfig, 30000)
+    const iv = setInterval(loadConfig, 5000)
     const onVisibility = () => { if (document.visibilityState === 'visible') loadConfig() }
     window.addEventListener('visibilitychange', onVisibility)
     return () => {
@@ -414,7 +414,7 @@ export default function App() {
     if (!s.shots.length) return
     // Hasil kertas BERSIH — tidak ada QR & tidak auto-upload ke DB.
     // QR + upload ke DB hanya terjadi saat user klik tombol "QR HASIL".
-    const canvas = await composeStrip(s.shots, s.branding, s.template, null, s.frames, s.selectedFrameId, s.design)
+    const canvas = await composeStrip(s.shots, s.branding, s.template, s.frames, s.selectedFrameId, s.design)
     stripCanvas.current = canvas
     setStripUrl(canvas.toDataURL('image/png'))
   }
@@ -451,22 +451,21 @@ export default function App() {
   }
 
   // Saat customer ganti bingkai custom (gallery), compose ulang preview hasil.
-  // Re-compose hasil saat frame custom (selectedFrameId) atau template dekoratif
-  // (branding.frame) berubah — biar preview strip ikut update (fix tombol template
-  // terlihat "tidak bisa dipilih").
+  // Re-compose hasil saat frame custom / branding / template / design berubah —
+  // biar preview strip di layar hasil selalu sync dengan setting admin.
   useEffect(() => {
     if (status !== 'done') return
     const s = useSession.getState()
     if (!s.shots.length) return
     let cancelled = false
     ;(async () => {
-      const canvas = await composeStrip(s.shots, s.branding, s.template, null, s.frames, s.selectedFrameId, s.design)
+      const canvas = await composeStrip(s.shots, s.branding, s.template, s.frames, s.selectedFrameId, s.design)
       if (cancelled) return
       stripCanvas.current = canvas
       setStripUrl(canvas.toDataURL('image/png'))
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFrameId, branding.frame, frames])
+  }, [selectedFrameId, branding, frames, design, status])
 
   // PREVIEW HASIL LIVE: saat capturing && armed, tiap shot masuk langsung di-compose
   // (mockup desain + slot) biar user lihat progres sebelum layar hasil. Tanpa fitur mirror.
@@ -476,7 +475,7 @@ export default function App() {
     if (!s.shots.length) { setPreviewUrl(null); return }
     let cancelled = false
     ;(async () => {
-      const canvas = await composeStrip(s.shots, s.branding, s.template, null, s.frames, s.selectedFrameId, s.design)
+      const canvas = await composeStrip(s.shots, s.branding, s.template, s.frames, s.selectedFrameId, s.design)
       if (cancelled) return
       setPreviewUrl(canvas.toDataURL('image/png'))
     })()
@@ -608,7 +607,7 @@ export default function App() {
   useEffect(() => {
     if (status !== 'done' || !stripCanvas.current || !useSession.getState().shots.length) return
     const s = useSession.getState()
-    composeStrip(s.shots, s.branding, s.template, s.digitalUrl, s.frames, s.selectedFrameId, s.design).then((c) => {
+    composeStrip(s.shots, s.branding, s.template, s.frames, s.selectedFrameId, s.design).then((c) => {
       stripCanvas.current = c
       setStripUrl(c.toDataURL('image/png'))
     })
@@ -632,12 +631,50 @@ export default function App() {
     }
   }, [screen])
 
+  const [infoOpen, setInfoOpen] = useState(false)
+
+  // ... existing code ...
+
   return (
     <div className="bg-[#FFE600] text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
       <PinGate />
       {screen === 'attract' ? (
-        /* Layar attract — kiosk idle, customer tap untuk mulai */
         <main key="attract" className="relative flex-grow flex flex-col items-center justify-center bg-[#FFE600] px-margin-mobile select-none overflow-hidden animate-[screenIn_.35s_ease-out]">
+          {/* Tombol info setting (pojok kanan atas) */}
+          <button
+            onClick={() => setInfoOpen(true)}
+            className="absolute top-4 right-4 z-40 w-10 h-10 bg-white/90 border-4 border-black brutal-shadow flex items-center justify-center hover:scale-110 active:scale-95 transition-transform"
+            title="Info Setting Aktif"
+          >
+            <span className="material-symbols-outlined text-[22px]">info</span>
+          </button>
+          {infoOpen && (
+            <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setInfoOpen(false)}>
+              <div className="bg-white border-4 border-black brutal-shadow p-4 max-w-sm w-full max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-headline-md font-black uppercase">Setting Aktif</h3>
+                  <button onClick={() => setInfoOpen(false)} className="w-8 h-8 bg-surface-variant border-2 border-black brutal-button-active flex items-center justify-center">×</button>
+                </div>
+                <div className="flex flex-col gap-2 text-sm">
+                  <InfoRow label="Template" value={template} />
+                  <InfoRow label="Shot" value={shotCount} />
+                  <InfoRow label="Mode" value={mode} />
+                  <InfoRow label="Harga" value={mode === 'event' ? 'Gratis' : `Rp ${Number(price).toLocaleString('id-ID')}`} />
+                  <InfoRow label="Preset" value={activePresetName || '-'} />
+                  <InfoRow label="Event" value={branding.eventName || '-'} />
+                  <InfoRow label="Nama Event Cetak" value={branding.showEventNameOnPrint ? (branding.eventNamePosition === 'footer' ? 'Footer' : 'Below Logo') : 'OFF'} />
+                  <InfoRow label="Jarak Event-Logo" value={`${branding.eventNameGapBelowLogo ?? 14}px`} />
+                  <InfoRow label="Logo" value={branding.logoDataUrl ? 'Ada' : 'Tidak'} />
+                  <InfoRow label="Tanggal" value={branding.showDate ? 'ON' : 'OFF'} />
+                  <InfoRow label="Watermark" value={branding.watermark || '-'} />
+                  <InfoRow label="QR HASIL" value="ON" />
+                  <InfoRow label="Frame" value={branding.frame} />
+                  <InfoRow label="Design" value={design?.name || '-'} />
+                  <InfoRow label="Layar" value={screen} />
+                </div>
+              </div>
+            </div>
+          )}
           {/* Background image/video (per mode, dari DB) */}
           {attractMedia && (
             attractMedia.type === 'video' ? (
@@ -1257,6 +1294,16 @@ export default function App() {
           </span>
         </div>
       )}
+    </div>
+  )
+}
+
+// Helper: row info setting aktif di modal attract.
+function InfoRow({ label, value }: { label: string; value: string | number | boolean | null | undefined }) {
+  return (
+    <div className="flex justify-between border-b-2 border-black/10 pb-1">
+      <span className="font-bold uppercase text-[11px] text-on-surface-variant">{label}</span>
+      <span className="font-black text-[12px] text-right">{value ?? '-'}</span>
     </div>
   )
 }

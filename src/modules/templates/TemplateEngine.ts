@@ -1,5 +1,4 @@
 import { BrandingConfig, FrameId, FrameDef } from '../../store/useSession'
-import { qrDataUrl } from '../qr/qr'
 
 export const PRINT_WIDTH = 576
 
@@ -140,19 +139,15 @@ function drawSlot(
 export async function composeDesign(
   shots: string[],
   branding: BrandingConfig,
-  design: DesignDef,
-  qrOverride?: string | null
+  design: DesignDef
 ): Promise<HTMLCanvasElement> {
   const imgs = await Promise.all(shots.map(loadImage))
-  const qrText = qrOverride ?? branding.qrText
-  const qr = qrText ? await loadImage(await qrDataUrl(qrText)) : null
+  // Footer (tanggal / watermark) — QR sudah tidak dicetak di struk.
 
-  // Footer (QR / tanggal / watermark) persis seperti composeStrip.
-  let footerH = 12
-  if (qr) footerH += 180 + (branding.qrText ? 28 : 8)
+  let footerH = 12 // padding bawah
   if (branding.showDate) footerH += 34
   if (branding.watermark) footerH += 44
-  footerH += 10
+  footerH += 10 // padding atas
   if (footerH < (branding.watermark ? 56 : 48)) footerH = branding.watermark ? 56 : 48
 
   // Canvas = PRINT_WIDTH lebar; tinggi = tinggi design (diskala dari canvasW) + footer.
@@ -184,26 +179,12 @@ export async function composeDesign(
     } catch { /* ignore frame gagal */ }
   }
 
-  // Footer: QR → scan text → tanggal → watermark.
+  // Footer: tanggal → watermark. (QR sudah tidak dicetak di struk.)
   const fy = designH
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
   ctx.fillStyle = '#000000'
   let cursorY = fy + 10
-  if (qr) {
-    const qz = 180
-    ctx.drawImage(qr, (PRINT_WIDTH - qz) / 2, cursorY, qz, qz)
-    cursorY += qz + 6
-    if (branding.qrText) {
-      ctx.font = '13px sans-serif'
-      ctx.fillText('scan untuk foto digital', PRINT_WIDTH / 2, cursorY + 16)
-      cursorY += 30
-    }
-    if (branding.showDate) {
-      ctx.font = '18px sans-serif'
-      ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
-      cursorY += 34
-    }
-  } else if (branding.showDate) {
+  if (branding.showDate) {
     ctx.font = '18px sans-serif'
     ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
     cursorY += 34
@@ -221,23 +202,24 @@ export async function composeStrip(
   shots: string[],
   branding: BrandingConfig,
   template: string = 'strip3',
-  qrOverride?: string | null,
   frames: FrameDef[] = [],
   selectedFrameId: string | null = null,
   design: DesignDef | null = null
 ): Promise<HTMLCanvasElement> {
   // Mode design (mockup bebas) — delegasikan.
-  if (design) return composeDesign(shots, branding, design, qrOverride)
+  if (design) return composeDesign(shots, branding, design)
   const imgs = await Promise.all(shots.map(loadImage))
   const logo = branding.logoDataUrl ? await loadImage(branding.logoDataUrl) : null
-  const qrText = qrOverride ?? branding.qrText
-  const qr = qrText ? await loadImage(await qrDataUrl(qrText)) : null
+  // QR tidak lagi dicetak di struk — hanya tersedia via tombol QR di app.
 
-  const headerH = branding.logoDataUrl ? 266 : 64
-  // Footer dibikin lebih panjang & di-stack dari atas: QR → scan text → tanggal
-  // → (jalur khusus paling bawah buat watermark) biar gak tenggelam di bawah logo/QR.
+  // Header H: kalau ada eventName (below-logo) + logo → butuh space ekstra +42px
+  // supaya event name tidak menumpuk dengan logo. Rumus dipakai admin Settings.tsx
+  // (renderStrukPreview) — JAGA KONSISTENSI.
+  const hasBelowLogoEventName = !!(branding.eventName && branding.showEventNameOnPrint)
+  const baseH = branding.logoDataUrl ? 266 : 64
+  const headerH = baseH + (branding.logoDataUrl && hasBelowLogoEventName ? 42 : 0)
+  // Footer: tanggal → watermark. (QR sudah tidak dicetak di struk.)
   let footerH = 12 // padding bawah
-  if (qr) footerH += 180 + (branding.qrText ? 28 : 8)
   if (branding.showDate) footerH += 34
   if (branding.watermark) footerH += 44 // jalur khusus watermark
   footerH += 10 // padding atas
@@ -298,15 +280,24 @@ export async function composeStrip(
     if (ar > 1) dh = box / ar
     else dw = box * ar
     ctx.drawImage(logo, lx + (box - dw) / 2, ly + (box - dh) / 2, dw, dh)
-    if (branding.eventName && branding.showEventNameOnPrint) {
+    // Skip render kalau eventNamePosition='footer' (akan di-render di footer section)
+    if (branding.eventName && branding.showEventNameOnPrint && branding.eventNamePosition !== 'footer') {
       ctx.fillStyle = '#000000'
       ctx.font = 'bold 24px sans-serif'
       ctx.textBaseline = 'alphabetic'
-      ctx.fillText(branding.eventName, PRINT_WIDTH / 2, headerH - 12)
+      // Event name Y = logoBottom + gap (visual, default 14) + fontSize (24)
+      // supaya text tidak menumpuk dengan logo. Field `eventNameGapBelowLogo`
+      // admin-controlled, default 14px.
+      const gap = branding.eventNameGapBelowLogo ?? 14
+      const eventY = ly + dh + gap + 24
+      ctx.fillText(branding.eventName, PRINT_WIDTH / 2, eventY)
     }
   } else {
-    ctx.font = 'bold 30px sans-serif'
-    if (branding.eventName && branding.showEventNameOnPrint) ctx.fillText(branding.eventName, PRINT_WIDTH / 2, headerH / 2)
+    // TANPA LOGO: render event name di tengah header (hanya kalau posisi below-logo)
+    if (branding.eventName && branding.showEventNameOnPrint && branding.eventNamePosition !== 'footer') {
+      ctx.font = 'bold 30px sans-serif'
+      ctx.fillText(branding.eventName, PRINT_WIDTH / 2, headerH / 2)
+    }
   }
 
   let i = 0
@@ -322,35 +313,25 @@ export async function composeStrip(
 
   const fy = headerH + topPad + contentH + bottomPad
   ctx.textBaseline = 'alphabetic'
-  ctx.fillStyle = '#000000' // pastikan teks footer (scan/date/watermark) hitam,
-  // gak ikut fillStyle putih dari kotak logo di atas.
-  // Stack konten footer dari atas, sisakan jalur terbawah buat watermark
-  // (gak pernah tabrakan sama QR / tanggal).
+  ctx.fillStyle = '#000000' // pastikan teks footer hitam, gak ikut fillStyle putih dari kotak logo.
   let cursorY = fy + 10
-  if (qr) {
-    const qz = 180
-    ctx.drawImage(qr, (PRINT_WIDTH - qz) / 2, cursorY, qz, qz)
-    cursorY += qz + 6
-    if (branding.qrText) {
-      ctx.font = '13px sans-serif'
-      ctx.fillText('scan untuk foto digital', PRINT_WIDTH / 2, cursorY + 16)
-      cursorY += 30
-    }
-    if (branding.showDate) {
-      ctx.font = '18px sans-serif'
-      ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
-      cursorY += 34
-    }
-  } else if (branding.showDate) {
+  if (branding.showDate) {
     ctx.font = '18px sans-serif'
     ctx.fillText(new Date().toLocaleString('id-ID'), PRINT_WIDTH / 2, cursorY + 18)
     cursorY += 34
   }
   if (branding.watermark) {
     ctx.font = '15px sans-serif'
-    ctx.fillStyle = '#000000' // eksplisit hitam — gak ikut fillStyle putih dari kotak logo
-    // Selalu di jalur terbawah (44px) → gak tenggelam di bawah logo/QR/tanggal.
+    ctx.fillStyle = '#000000'
     ctx.fillText(branding.watermark, PRINT_WIDTH / 2, canvas.height - 22)
+  }
+  // Event name di footer (jika eventNamePosition='footer'). Taruh di atas watermark.
+  if (branding.eventName && branding.showEventNameOnPrint && branding.eventNamePosition === 'footer') {
+    ctx.fillStyle = '#000000'
+    ctx.font = 'bold 18px sans-serif'
+    ctx.textBaseline = 'alphabetic'
+    const evtY = canvas.height - (branding.watermark ? 64 : 20)
+    ctx.fillText(branding.eventName, PRINT_WIDTH / 2, evtY)
   }
 
   // Frame bawaan digambar (kecuali 'none'). Nama event di frame mengikuti toggle cetak.

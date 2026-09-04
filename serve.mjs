@@ -219,7 +219,15 @@ app.delete('/api/presets/:name', async (req, res) => {
 app.get('/api/config', async (req, res) => {
   try {
     const cfg = await getConfig(req.tenantId)
-    res.json(cfg || { mode: 'regular', price: 5000, preset_name: null, branding: null })
+    const final = cfg || { mode: 'regular', price: 5000, preset_name: null, branding: null }
+    // ETag: MD5 dari canonical JSON (sort keys, no undefined). Booth pakai ini
+    // untuk deteksi perubahan config (reload page kalau etag berbeda) tanpa
+    // perlu DB migration untuk version counter.
+    const canonical = JSON.stringify(final, Object.keys(final).sort())
+    const etag = '"' + crypto.createHash('md5').update(canonical).digest('hex') + '"'
+    res.setHeader('ETag', etag)
+    res.setHeader('Cache-Control', 'no-cache')
+    res.json(final)
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }

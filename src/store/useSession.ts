@@ -20,10 +20,16 @@ export interface BrandingConfig {
   logoDataUrl: string | null
   showDate: boolean
   watermark: string
-  qrText: string
+  // QR struk: field dihapus. QR tidak lagi dicetak di struk — tombol QR di app saja.
   frame: FrameId
   // Tampilkan nama event di HASIL CETAK (header + frame vintage). Attract tetap pakai eventName.
   showEventNameOnPrint: boolean
+  // Posisi nama event di struk: 'below-logo' (default) di bawah logo, atau
+  // 'footer' di bawah foto (menghindari bentrokan dengan logo besar).
+  eventNamePosition?: 'below-logo' | 'footer'
+  // Jarak visual (px) antara logo dan nama event saat eventNamePosition='below-logo'.
+  // Default 14 — turunkan kalau event name panjang & logo tidak terlalu besar.
+  eventNameGapBelowLogo?: number
   // Toggle tampil/sembunyi kotak "Capturing" di bawah tombol Mulai Jepret (booth screen).
   showCapturingBox: boolean
   // Jarak dekorasi foto (px): atas (vs header/logo), bawah (vs footer QR), antar foto.
@@ -109,9 +115,10 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   logoDataUrl: null,
   showDate: true,
   watermark: '',
-  qrText: '',
   frame: 'none',
   showEventNameOnPrint: true,
+  eventNamePosition: 'below-logo',
+  eventNameGapBelowLogo: 14,
   showCapturingBox: true,
   // Jarak dekorasi foto default (px): atas 24, bawah 24, antar foto 20.
   photoTopPad: 24,
