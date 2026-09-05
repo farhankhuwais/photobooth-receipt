@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+// ADMIN_PREVIEW_CENTER_FIX_v2
 import {
   Box, Paper, Typography, Alert, MenuItem, TextField, Button, Snackbar,
   CircularProgress, Grid, FormControl, InputLabel, Select, Slider, FormControlLabel, Checkbox,
@@ -171,8 +172,6 @@ async function renderStrukPreview(
   const sTP = _h(topPad)
   const sBP = _h(bottomPad)
   const sGY = _h(gapY)
-  const sSW = _h(shotW)
-  const sSH = _h(shotH)
   const sFH = _h(footerH)
   const sContentH = _h(contentH)
 
@@ -228,14 +227,14 @@ async function renderStrukPreview(
     }
   }
 
-  // Body — placeholder foto
+  // Body — placeholder foto centered
   let i = 0
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const x = sSP + c * (sSW + sGX)
-      const y = sH + sTP + r * (sSH + sGY)
-      const ph = makePlaceholderImg(Math.max(1, Math.round(sSW)), Math.max(1, Math.round(sSH)), `${i + 1}`)
-      ctx.drawImage(ph, x, y, sSW, sSH)
+      const x = (W - shotW) / 2 + c * (shotW + sGX)
+      const y = sH + sTP + r * (shotH + sGY)
+      const ph = makePlaceholderImg(Math.max(1, Math.round(shotW)), Math.max(1, Math.round(shotH)), `${i + 1}`)
+      ctx.drawImage(ph, x, y, shotW, shotH)
       i++
     }
   }
