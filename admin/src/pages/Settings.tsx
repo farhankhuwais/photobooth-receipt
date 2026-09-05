@@ -813,7 +813,6 @@ export default function Settings() {
                         display: 'block',
                         width: STRUK_PREVIEW_WIDTH,
                         maxWidth: '100%',
-                        height: 'auto',
                         imageRendering: 'auto',
                         marginLeft: 'auto',
                         marginRight: 'auto',
