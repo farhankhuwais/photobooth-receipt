@@ -636,10 +636,10 @@ export default function App() {
   // ... existing code ...
 
   return (
-    <div className="bg-[#FFE600] text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+    <div className="text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container" style={{ backgroundColor: branding.primaryColor || '#FFE600' }}>
       <PinGate />
       {screen === 'attract' ? (
-        <main key="attract" className="relative flex-grow flex flex-col items-center justify-center bg-[#FFE600] px-margin-mobile select-none overflow-hidden animate-[screenIn_.35s_ease-out]">
+        <main key="attract" className="relative flex-grow flex flex-col items-center justify-center px-margin-mobile select-none overflow-hidden animate-[screenIn_.35s_ease-out]" style={{ backgroundColor: branding.primaryColor || '#FFE600' }}>
           {/* Tombol info setting (pojok kanan atas) */}
           <button
             onClick={() => setInfoOpen(true)}
@@ -666,6 +666,7 @@ export default function App() {
                   <InfoRow label="Jarak Event-Logo" value={`${branding.eventNameGapBelowLogo ?? 14}px`} />
                   <InfoRow label="Logo" value={branding.logoDataUrl ? 'Ada' : 'Tidak'} />
                   <InfoRow label="Tanggal" value={branding.showDate ? 'ON' : 'OFF'} />
+                  <InfoRow label="Kotak Capturing" value={branding.showCapturingBox ? 'ON' : 'OFF'} />
                   <InfoRow label="Watermark" value={branding.watermark || '-'} />
                   <InfoRow label="QR HASIL" value="ON" />
                   <InfoRow label="Frame" value={branding.frame} />
@@ -714,7 +715,17 @@ export default function App() {
             )}
             <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider text-white drop-shadow-[3px_3px_0px_rgba(0,0,0,0.8)] attract-beat">Sentuh untuk mulai</span>
             <span className="font-label-bold text-label-bold text-white/90 uppercase tracking-widest text-[12px] drop-shadow-[2px_2px_0px_rgba(0,0,0,0.8)]">
-              {mode === 'event' ? `Event • ${branding.eventName || 'Acara'}` : `Photobooth • Rp ${price.toLocaleString('id-ID')} / cetak`}
+              {(() => {
+                const tagline = (branding.attractTagline || '').trim()
+                if (tagline) {
+                  return tagline
+                    .replace(/\{price\}/g, `Rp ${price.toLocaleString('id-ID')}`)
+                    .replace(/\{event\}/g, branding.eventName || 'Acara')
+                }
+                return mode === 'event'
+                  ? `Event • ${branding.eventName || 'Acara'}`
+                  : `Photobooth • Rp ${price.toLocaleString('id-ID')} / cetak`
+              })()}
             </span>
             <span className="material-symbols-outlined text-[40px] text-white/90 drop-shadow-[2px_2px_0px_rgba(0,0,0,0.8)] attract-hint">arrow_downward</span>
           </button>
@@ -723,7 +734,7 @@ export default function App() {
         <>
           {/* Header — disembunyikan di layar hasil (done) karena sudah ada tombol AKHIRI SESI */}
           {status !== 'done' && (
-          <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm bg-[#FFE600] border-b-4 border-black brutal-shadow-sm">
+          <header className="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-margin-mobile py-sm border-b-4 border-black brutal-shadow-sm" style={{ backgroundColor: branding.primaryColor || '#FFE600' }}>
             <button
                             onClick={() => (screen === 'booth' && status === 'idle' ? (step === 1 ? goAttract() : setStep(1)) : onReset())}
                             title={screen === 'booth' && status === 'idle' ? 'Kembali' : 'Mulai ulang sesi'}
@@ -746,7 +757,7 @@ export default function App() {
           )}
 
           {/* Main Layout */}
-          <main key={status} className={`flex-grow pt-[64px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]' : 'bg-[#FFE600] px-margin-mobile animate-[screenIn_.35s_ease-out]'}`}>
+          <main key={status} className={`flex-grow pt-[64px] pb-xl flex flex-col relative ${status === 'done' ? 'md:grid md:grid-cols-12 md:gap-gutter md:items-start px-margin-mobile animate-[screenIn_.35s_ease-out]' : 'px-margin-mobile animate-[screenIn_.35s_ease-out]'}`} style={{ backgroundColor: branding.primaryColor || '#FFE600' }}>
 
             {status !== 'done' && screen === 'booth' && (
               <>

@@ -20,6 +20,9 @@ export interface BrandingConfig {
   logoDataUrl: string | null
   showDate: boolean
   watermark: string
+  primaryColor?: string
+  headerText?: string
+  footerText?: string
   // QR struk: field dihapus. QR tidak lagi dicetak di struk — tombol QR di app saja.
   frame: FrameId
   // Tampilkan nama event di HASIL CETAK (header + frame vintage). Attract tetap pakai eventName.
@@ -45,6 +48,10 @@ export interface BrandingConfig {
   // Kegelapan cetak %: 100 = netral, makin besar makin tebal (kontras+ambang
   // dithering dinaikkan sebelum rasterisasi). Naikin kalau hasil cetak samar.
   printDarkness: number
+  // Attract media + icon + custom tagline
+  attractMedia?: string | null
+  attractIcon?: string | null
+  attractTagline?: string | null
 }
 
 export type SessionStatus = 'idle' | 'capturing' | 'done'
@@ -128,6 +135,9 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   photoGap2x2Y: 20,
   paperWidth: '58mm',
   printDarkness: 100,
+  attractMedia: null,
+  attractIcon: null,
+  attractTagline: null,
 }
 
 function loadBridgeUrl(): string {

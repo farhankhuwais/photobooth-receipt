@@ -298,13 +298,20 @@ export async function composeStrip(
       ctx.font = 'bold 30px sans-serif'
       ctx.fillText(branding.eventName, PRINT_WIDTH / 2, headerH / 2)
     }
+    // Header text sebagai fallback merek saat tidak ada logo.
+    if (branding.headerText) {
+      ctx.font = 'bold 24px sans-serif'
+      ctx.fillText(branding.headerText, PRINT_WIDTH / 2, headerH / 2 + (branding.eventName && branding.showEventNameOnPrint && branding.eventNamePosition !== 'footer' ? 24 : 0))
+    }
   }
 
   let i = 0
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (i >= imgs.length) break
-      const x = sidePad + c * (shotW + gapX)
+      const gridW = cols * shotW + (cols - 1) * gapX
+      const startX = (PRINT_WIDTH - gridW) / 2
+      const x = startX + c * (shotW + gapX)
       const y = headerH + topPad + r * (shotH + gapY)
       drawCover(ctx, imgs[i], x, y, shotW, shotH)
       i++
@@ -325,12 +332,18 @@ export async function composeStrip(
     ctx.fillStyle = '#000000'
     ctx.fillText(branding.watermark, PRINT_WIDTH / 2, canvas.height - 22)
   }
-  // Event name di footer (jika eventNamePosition='footer'). Taruh di atas watermark.
+  if (branding.footerText) {
+    ctx.font = '16px sans-serif'
+    ctx.fillStyle = '#000000'
+    const footerTextY = canvas.height - (branding.watermark ? 48 : 22)
+    ctx.fillText(branding.footerText, PRINT_WIDTH / 2, footerTextY)
+  }
+  // Event name di footer (jika eventNamePosition='footer'). Taruh di atas watermark/footerText.
   if (branding.eventName && branding.showEventNameOnPrint && branding.eventNamePosition === 'footer') {
     ctx.fillStyle = '#000000'
     ctx.font = 'bold 18px sans-serif'
     ctx.textBaseline = 'alphabetic'
-    const evtY = canvas.height - (branding.watermark ? 64 : 20)
+    const evtY = canvas.height - (branding.watermark || branding.footerText ? 64 : 20)
     ctx.fillText(branding.eventName, PRINT_WIDTH / 2, evtY)
   }
 

@@ -122,6 +122,7 @@ async function renderStrukPreview(
   template: 'single' | 'dual' | 'strip3' | 'grid2x2',
   onRendered?: (h: number) => void
 ) {
+  console.log("[DEBUG] renderStrukPreview:", template, "W=", canvas.width, "totalH=", canvas.height)
   const ctx = canvas.getContext('2d')!
   const W = STRUK_PREVIEW_WIDTH // 192 (setara PRINT_WIDTH=576 di scale 1:3)
   const s = STRUK_PREVIEW_SCALE // 1/3
@@ -173,7 +174,7 @@ async function renderStrukPreview(
   const sBP = _h(bottomPad)
   const sGY = _h(gapY)
   const sFH = _h(footerH)
-  const sContentH = _h(contentH)
+  const sContentH = contentH
 
   const totalH = Math.round(sH + sTP + sContentH + sBP + sFH)
   canvas.width = W
@@ -218,20 +219,24 @@ async function renderStrukPreview(
       ctx.fillText(b.eventName, W / 2, eventY)
     }
   } else {
-    // TANPA LOGO: TemplateEngine hanya render eventName (headerText diabaikan!)
-    // Sesuai TemplateEngine line 308-309. Kalau mau render headerText juga, edit
-    // TemplateEngine dulu, lalu update sini.
+    // TANPA LOGO: render event name di tengah header, lalu headerText sebagai merek.
     if (b.eventName && b.showEventNameOnPrint) {
       ctx.font = `bold ${_h(30)}px sans-serif`
       ctx.fillText(b.eventName, W / 2, sH / 2)
     }
+    if (b.headerText) {
+      ctx.font = `bold ${_h(22)}px sans-serif`
+      ctx.fillText(b.headerText, W / 2, sH / 2 + (b.eventName && b.showEventNameOnPrint ? _h(26) : 0))
+    }
   }
 
-  // Body — placeholder foto centered
+  // Body — placeholder foto centered untuk grid 2x2, kiri untuk template lain
   let i = 0
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const x = (W - shotW) / 2 + c * (shotW + sGX)
+      const gridW = cols * shotW + (cols - 1) * sGX
+      const startX = (W - gridW) / 2
+      const x = startX + c * (shotW + sGX)
       const y = sH + sTP + r * (shotH + sGY)
       const ph = makePlaceholderImg(Math.max(1, Math.round(shotW)), Math.max(1, Math.round(shotH)), `${i + 1}`)
       ctx.drawImage(ph, x, y, shotW, shotH)
@@ -256,11 +261,16 @@ async function renderStrukPreview(
     // Selalu di jalur terbawah (44px → _h(44) di preview)
     ctx.fillText(b.watermark, W / 2, totalH - _h(22))
   }
-
+  if (b.footerText) {
+    ctx.font = `${_h(16)}px sans-serif`
+    ctx.fillStyle = '#000000'
+    const footerTextY = totalH - (b.watermark ? _h(48) : _h(22))
+    ctx.fillText(b.footerText, W / 2, footerTextY)
+  }
   // Event name di posisi footer (jika eventNamePosition='footer')
   if (b.eventName && b.showEventNameOnPrint && b.eventNamePosition === 'footer') {
-    // Taruh di atas watermark
-    const evtY = totalH - _h(b.watermark ? 64 : 20)
+    // Taruh di atas watermark/footerText
+    const evtY = totalH - _h((b.watermark || b.footerText) ? 64 : 20)
     ctx.font = `bold ${_h(18)}px sans-serif`
     ctx.fillStyle = '#000000'
     ctx.fillText(b.eventName, W / 2, evtY)
@@ -305,6 +315,8 @@ interface Branding {
   // Attract screen (Layar Awal)
   attractMedia?: string | null
   attractIcon?: string | null
+  // Custom tagline di bawah ikon attract. Gunakan {price} untuk placeholder harga.
+  attractTagline?: string | null
 }
 
 interface AppConfig {
@@ -662,7 +674,14 @@ export default function Settings() {
                 <Grid item xs={6}>
                   <TextField
                     select fullWidth label="Mode" value={form.mode} size="small"
-                    onChange={(e) => setForm({ ...form, mode: e.target.value as 'regular' | 'event' })}
+                    onChange={(e) => {
+                      const mode = e.target.value as 'regular' | 'event'
+                      setForm((f) => ({
+                        ...f,
+                        mode,
+                        ...(mode === 'regular' && Number(f.price) < 1000 ? { price: 1000 } : {}),
+                      }))
+                    }}
                   >
                     <MenuItem value="regular">Regular</MenuItem>
                     <MenuItem value="event">Event (gratis)</MenuItem>
@@ -671,9 +690,10 @@ export default function Settings() {
                 <Grid item xs={6}>
                   <TextField
                     fullWidth type="number" label="Harga (Rp)" value={form.price} size="small"
-                    onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, price: Math.max(1000, Number(e.target.value) || 1000) })}
                     disabled={form.mode === 'event'}
-                    inputProps={{ min: 0, step: 500 }}
+                    inputProps={{ min: 1000, step: 500 }}
+                    helperText={form.mode === 'regular' ? 'Minimal Rp 1.000' : 'Gratis'}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -899,10 +919,19 @@ export default function Settings() {
                   <TextField fullWidth label="Warna Utama (primary)" value={b.primaryColor || ''} size="small"
                     onChange={(e) => setBranding({ primaryColor: e.target.value })}
                     placeholder="#1976d2"
+                    helperText="Klik kotak warna untuk memilih, atau ketik hex (#rrggbb)"
                     InputProps={{
                       startAdornment: b.primaryColor ? (
                         <Box sx={{ width: 20, height: 20, borderRadius: 0.5, mr: 1, bgcolor: b.primaryColor, border: '1px solid #ccc', flexShrink: 0 }} />
                       ) : null,
+                      endAdornment: (
+                        <input
+                          type="color"
+                          value={b.primaryColor || '#FFE600'}
+                          onChange={(e) => setBranding({ primaryColor: e.target.value })}
+                          style={{ width: 32, height: 32, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+                        />
+                      ),
                     }}
                   />
                 </Grid>
@@ -979,16 +1008,6 @@ export default function Settings() {
                         sx={(!b.showEventNameOnPrint || b.eventNamePosition === 'footer') ? { '& .MuiInputBase-input': { color: 'text.disabled' } } : {}}
                       />
                     </Box>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={!!b.showCapturingBox}
-                          onChange={(e) => setBranding({ showCapturingBox: e.target.checked })}
-                          size="small"
-                        />
-                      }
-                      label="Tampilkan kotak capturing (lingkaran capture area)"
-                    />
                   </Box>
                 </Grid>
               </Grid>
@@ -1299,6 +1318,17 @@ export default function Settings() {
                       <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
                         Rekomendasi: <strong>1:1 (persegi)</strong>, ideal <strong>256×256</strong> atau <strong>512×512</strong> piksel. Tampil di tengah tombol 720×540 (4:3).
                       </Typography>
+
+                      {/* Custom tagline untuk layar awal */}
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Teks Bawaan Layar Awal"
+                        value={b.attractTagline || ''}
+                        onChange={(e) => setBranding({ attractTagline: e.target.value })}
+                        sx={{ mt: 1 }}
+                        helperText="Kosongkan untuk pakai default. Placeholder: {price} untuk harga, {event} untuk nama event."
+                      />
                     </Box>
                   </Box>
                 </Grid>
