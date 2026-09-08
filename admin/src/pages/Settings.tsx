@@ -1333,30 +1333,20 @@ export default function Settings() {
                       />
                       {/* Custom teks tombol attract */}
                       <TextField
-                                              fullWidth
-                                              size="small"
-                                              label="Teks Bawaan Layar Awal"
-                                              value={b.attractTagline || ''}
-                                              onChange={(e) => setBranding({ attractTagline: e.target.value })}
-                                              sx={{ mt: 1 }}
-                                              helperText="Kosongkan untuk pakai default. Placeholder: {price} untuk harga, {event} untuk nama event."
-                                            />
-                                            {/* Custom teks tombol attract */}
-                                            <TextField
-                                              fullWidth
-                                              size="small"
-                                              label="Teks Tombol Layar Awal"
-                                              value={b.attractCtaText || ''}
-                                              onChange={(e) => setBranding({ attractCtaText: e.target.value })}
-                                              sx={{ mt: 1 }}
-                                              helperText="Kosongkan untuk pakai default: 'Sentuh untuk mulai'"
-                                            />
-                                          </Box>
-                                        </Box>
-                                      </Grid>
-                                    </Grid>
-                                  </Paper>
-                                </Grid>
+                        fullWidth
+                        size="small"
+                        label="Teks Tombol Layar Awal"
+                        value={b.attractCtaText || ''}
+                        onChange={(e) => setBranding({ attractCtaText: e.target.value })}
+                        sx={{ mt: 1 }}
+                        helperText="Kosongkan untuk pakai default: 'Sentuh untuk mulai'"
+                      />
+                    </Box>
+                  </Box>
+                </Grid>
+              </Grid>
+            </Paper>
+          </Grid>
 
           {/* ── Save ──────────────────────────────────────────── */}
           <Grid item xs={12}>
