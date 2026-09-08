@@ -48,10 +48,11 @@ export interface BrandingConfig {
   // Kegelapan cetak %: 100 = netral, makin besar makin tebal (kontras+ambang
   // dithering dinaikkan sebelum rasterisasi). Naikin kalau hasil cetak samar.
   printDarkness: number
-  // Attract media + icon + custom tagline
+  // Attract media + icon + custom tagline + CTA text
   attractMedia?: string | null
   attractIcon?: string | null
   attractTagline?: string | null
+  attractCtaText?: string | null
 }
 
 export type SessionStatus = 'idle' | 'capturing' | 'done'
@@ -138,6 +139,7 @@ export const DEFAULT_BRANDING: BrandingConfig = {
   attractMedia: null,
   attractIcon: null,
   attractTagline: null,
+  attractCtaText: null,
 }
 
 function loadBridgeUrl(): string {

@@ -713,7 +713,7 @@ export default function App() {
             ) : (
               <span className="material-symbols-outlined text-[120px] text-white drop-shadow-[4px_4px_0px_rgba(0,0,0,0.8)] group-hover:scale-110 transition-transform duration-300 attract-beat">touch_app</span>
             )}
-            <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider text-white drop-shadow-[3px_3px_0px_rgba(0,0,0,0.8)] attract-beat">Sentuh untuk mulai</span>
+            <span className="font-headline-lg-mobile md:text-headline-lg font-black uppercase tracking-wider text-white drop-shadow-[3px_3px_0px_rgba(0,0,0,0.8)] attract-beat">{branding.attractCtaText || 'Sentuh untuk mulai'}</span>
             <span className="font-label-bold text-label-bold text-white/90 uppercase tracking-widest text-[12px] drop-shadow-[2px_2px_0px_rgba(0,0,0,0.8)]">
               {(() => {
                 const tagline = (branding.attractTagline || '').trim()
@@ -1141,7 +1141,7 @@ export default function App() {
                 </button>
               </div>
               
-              {/* Akhiri sesi -> balik ke layar awal "Sentuh untuk mulai" + filter reset ke default */}
+              {/* Akhiri sesi -> balik ke layar awal "{branding.attractCtaText || 'Sentuh untuk mulai'}" + filter reset ke default */}
               <button
                 onClick={() => { setFilter('none'); goAttract() }}
                 className="w-full py-3 px-6 bg-surface border-4 border-black flex items-center justify-center gap-2 brutal-shadow brutal-button-active transition-all duration-75 group relative overflow-hidden"

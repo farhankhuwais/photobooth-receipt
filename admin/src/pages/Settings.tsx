@@ -317,6 +317,8 @@ interface Branding {
   attractIcon?: string | null
   // Custom tagline di bawah ikon attract. Gunakan {price} untuk placeholder harga.
   attractTagline?: string | null
+  // Custom teks tombol attract (default "Sentuh untuk mulai")
+  attractCtaText?: string | null
 }
 
 interface AppConfig {
@@ -1329,12 +1331,32 @@ export default function Settings() {
                         sx={{ mt: 1 }}
                         helperText="Kosongkan untuk pakai default. Placeholder: {price} untuk harga, {event} untuk nama event."
                       />
-                    </Box>
-                  </Box>
-                </Grid>
-              </Grid>
-            </Paper>
-          </Grid>
+                      {/* Custom teks tombol attract */}
+                      <TextField
+                                              fullWidth
+                                              size="small"
+                                              label="Teks Bawaan Layar Awal"
+                                              value={b.attractTagline || ''}
+                                              onChange={(e) => setBranding({ attractTagline: e.target.value })}
+                                              sx={{ mt: 1 }}
+                                              helperText="Kosongkan untuk pakai default. Placeholder: {price} untuk harga, {event} untuk nama event."
+                                            />
+                                            {/* Custom teks tombol attract */}
+                                            <TextField
+                                              fullWidth
+                                              size="small"
+                                              label="Teks Tombol Layar Awal"
+                                              value={b.attractCtaText || ''}
+                                              onChange={(e) => setBranding({ attractCtaText: e.target.value })}
+                                              sx={{ mt: 1 }}
+                                              helperText="Kosongkan untuk pakai default: 'Sentuh untuk mulai'"
+                                            />
+                                          </Box>
+                                        </Box>
+                                      </Grid>
+                                    </Grid>
+                                  </Paper>
+                                </Grid>
 
           {/* ── Save ──────────────────────────────────────────── */}
           <Grid item xs={12}>
