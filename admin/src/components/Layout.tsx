@@ -7,7 +7,6 @@ import {
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import GroupIcon from '@mui/icons-material/Group'
 import PhotoIcon from '@mui/icons-material/Photo'
-import StyleIcon from '@mui/icons-material/Style'
 import PaletteIcon from '@mui/icons-material/Palette'
 import BookmarkIcon from '@mui/icons-material/Bookmark'
 import HistoryIcon from '@mui/icons-material/History'
@@ -27,7 +26,6 @@ const navItems = [
   { label: 'Tenants', icon: <GroupIcon />, path: '/tenants', roles: ['super_admin'] },
   { label: 'Users', icon: <GroupIcon />, path: '/users', roles: ['super_admin'] },
   { label: 'Photos', icon: <PhotoIcon />, path: '/photos', roles: ['super_admin', 'tenant_admin'] },
-  { label: 'Frames', icon: <StyleIcon />, path: '/frames', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Designs', icon: <PaletteIcon />, path: '/designs', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Presets', icon: <BookmarkIcon />, path: '/presets', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Audit Log', icon: <HistoryIcon />, path: '/audit', roles: ['super_admin'] },

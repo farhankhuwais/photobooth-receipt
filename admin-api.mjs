@@ -10,10 +10,10 @@ import multer from 'multer'
 import { generateLicenseCode, verifyLicenseCode } from './src/lib/licenseUtil.js'
 import {
   verifyAdmin, createSession, destroySession, getSessionUser, recordLoginAttempt,
-  recentFailedLogins, logAudit, listAudit, listTenantsWithStats, createTenant,
-  updateTenant, deleteTenant, listUsers, createUser, updateUser, deleteUser,
-  getUserById, setLastLogin, getGlobalOverview, listPhotos, deletePhoto,
-  listFrames, listDesigns, getDesign, deleteDesign, saveDesign, updateDesign,
+ recentFailedLogins, logAudit, listAudit, listTenantsWithStats, createTenant,
+ updateTenant, deleteTenant, listUsers, createUser, updateUser, deleteUser,
+ getUserById, setLastLogin, getGlobalOverview, listPhotos, deletePhoto,
+ listDesigns, getDesign, deleteDesign, saveDesign, updateDesign,
   getConfig, saveConfig, listPresets, getPreset, savePreset, deletePreset,
   listTiers, getTier, createTier, updateTier, deleteTier,
   generateUserCode, assignUserCode, setUserTier, checkTierLimit, getUserTierLimit, getTenantUsage,
@@ -544,6 +544,25 @@ export function adminApi() {
     res.json({ ...out, page, pageSize })
   })
 
+  r.delete('/audit/:id', requireSession, requireRole('super_admin'), requireCsrf, async (req, res) => {
+    await pool.query('DELETE FROM admin_audit_log WHERE id = $1', [Number(req.params.id)])
+    res.json({ ok: true })
+  })
+
+  // Audit cleanup: hapus entri lebih lama dari X hari
+  r.post('/audit/cleanup', requireSession, requireRole('super_admin'), requireCsrf, expressJson(), async (req, res) => {
+    const olderThanDays = Number(req.body?.older_than_days ?? 30)
+    if (!Number.isFinite(olderThanDays) || olderThanDays <= 0) {
+      return res.status(400).json({ error: 'older_than_days harus angka positif' })
+    }
+    const result = await pool.query(
+      `DELETE FROM admin_audit_log WHERE created_at < now() - make_interval(days => $1) RETURNING id`,
+      [olderThanDays]
+    )
+    await logAudit({ userId: req.user.id, action: 'audit_cleanup', metadata: { older_than_days, deleted: result.rowCount }, ip: clientIp(req) })
+    res.json({ ok: true, deleted: result.rowCount })
+  })
+
   // Photos - list per tenant (super_admin can choose tenant or all)
   r.get('/photos', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1)
@@ -560,13 +579,6 @@ export function adminApi() {
     await deletePhoto(req.params.id)
     await logAudit({ userId: req.user.id, action: 'photo_delete', target: req.params.id, ip: clientIp(req) })
     res.json({ ok: true })
-  })
-
-  // Frames list per tenant
-  r.get('/frames', requireSession, requireRole('super_admin', 'tenant_admin'), async (req, res) => {
-    const tenantSlug = req.user.role === 'super_admin' ? (req.query.tenantSlug || null) : req.user.tenant_id
-    const items = await listFrames(null, tenantSlug || undefined)
-    res.json({ items, total: items.length })
   })
 
   // Designs list per tenant
@@ -637,7 +649,13 @@ export function adminApi() {
     const tenantSlug = req.user.role === 'super_admin' ? (req.body.tenantSlug || null) : req.user.tenant_id
     if (!tenantSlug) return res.status(400).json({ error: 'tenantSlug wajib' })
     await saveConfig(req.body, tenantSlug)
-    await logAudit({ userId: req.user.id, action: 'config_update', target: tenantSlug, ip: clientIp(req) })
+    await logAudit({
+      userId: req.user.id,
+      action: 'config_update',
+      target: tenantSlug,
+      metadata: { preset_name: req.body?.preset_name ?? null },
+      ip: clientIp(req),
+    })
     res.json({ ok: true })
   })
 
