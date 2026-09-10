@@ -163,7 +163,7 @@ photobooth/
 │     │                   # PricingTiers, AuditLog, Billing, LicenseCodes, Settings, Manage
 │     └─ api/client.ts    # REST client (auth session + CSRF header)
 │
-└─ docs/MULTI_TENANT.md   # Catatan multi-tenant & license (sebagian sudah usang — TODO)
+└─ server/             # (legacy) Node bridge — TIDAK dipakai deploy utama
 ```
 
 > **⚠️ JANGAN edit `server/`** — bridge Node lama, tidak dipakai deploy utama.
@@ -264,7 +264,7 @@ Pricing tiers: **Basic (1 tenant)** · **Premium (3)** · **Profesional (99)**. 
 Akses booth per tenant bisa dibatasi **PIN 4 digit** (`tenants.access_pin`) — booth menampilkan PinGate
 dan semua `/api/*` (kecuali public config/presets/designs) wajib header `x-tenant-pin`.
 
-Dokumentasi multi-tenant lengkap (perlu sinkronisasi): `docs/MULTI_TENANT.md`.
+Semua detail arsitektur multi-tenant & license untuk AI agents ada di [`AGENTS.md`](AGENTS.md).
 
 ---
 

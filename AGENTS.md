@@ -53,8 +53,7 @@ photobooth/
 │  │  │                #   Presets, PricingTiers, AuditLog, Billing, LicenseCodes, Settings, Manage)
 │  │  └─ api/client.ts # REST client wrapper (auth + CSRF)
 │  └─ package.json     # deps admin sendiri (MUI v5, recharts, axios, react-router-dom v6)
-├─ server/             # (legacy) Node bridge lama — TIDAK dipakai untuk deploy utama
-└─ docs/               # MULTI_TENANT.md (sebagian usang — lihat bagian License System & tabel di bawah)
+└─ server/             # (legacy) Node bridge lama — TIDAK dipakai untuk deploy utama
 ```
 
 > **⚠️ JANGAN edit `server/`** — bridge lama. Backend aktif adalah `serve.mjs` + `admin-api.mjs` + `db.mjs`.
