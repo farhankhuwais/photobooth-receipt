@@ -4,7 +4,7 @@ import {
   AppBar, Toolbar, Typography, Box, Drawer, List, ListItem, ListItemButton,
   ListItemIcon, ListItemText, IconButton, Divider, Menu, MenuItem, Avatar,
 } from '@mui/material'
-import DashboardIcon from '@mui/icons-material/Dashboard'
+import HomeIcon from '@mui/icons-material/Home'
 import GroupIcon from '@mui/icons-material/Group'
 import PhotoIcon from '@mui/icons-material/Photo'
 import PaletteIcon from '@mui/icons-material/Palette'
@@ -21,9 +21,8 @@ import { useAuth } from '@/context/AuthContext'
 const drawerWidth = 240
 
 const navItems = [
-  { label: 'Manage', icon: <DashboardIcon />, path: '/manage', roles: ['super_admin', 'tenant_admin', 'tenant_user'] },
-  { label: 'Overview', icon: <DashboardIcon />, path: '/', roles: ['super_admin'] },
-  { label: 'Tenants', icon: <GroupIcon />, path: '/tenants', roles: ['super_admin'] },
+  { label: 'Beranda', icon: <HomeIcon />, path: '/', roles: ['super_admin', 'tenant_admin'] },
+  { label: 'Vendors', icon: <GroupIcon />, path: '/tenants', roles: ['super_admin'] },
   { label: 'Users', icon: <GroupIcon />, path: '/users', roles: ['super_admin'] },
   { label: 'Photos', icon: <PhotoIcon />, path: '/photos', roles: ['super_admin', 'tenant_admin'] },
   { label: 'Designs', icon: <PaletteIcon />, path: '/designs', roles: ['super_admin', 'tenant_admin'] },
@@ -31,7 +30,7 @@ const navItems = [
   { label: 'Audit Log', icon: <HistoryIcon />, path: '/audit', roles: ['super_admin'] },
   { label: 'Pricing Tiers', icon: <LocalOfferIcon />, path: '/tiers', roles: ['super_admin'] },
   { label: 'Billing', icon: <PaymentsIcon />, path: '/billing', roles: ['super_admin'] },
-  { label: 'License Codes', icon: <VpnKeyIcon />, path: '/license', roles: ['super_admin'] },
+  { label: 'Kode Aktivasi', icon: <VpnKeyIcon />, path: '/license', roles: ['super_admin'] },
   { label: 'Settings', icon: <SettingsIcon />, path: '/settings', roles: ['super_admin', 'tenant_admin'] },
 ]
 

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Achipix — Photobooth Modern, Cetak Instan & AI Photo Strip</title>
+  <meta name="description" content="Photobooth tanpa ribet. Daftar dalam 2 menit, langsung cetak foto receipt dalam hitungan detik. Harga mulai Rp 30.000/bulan.">
+  <link rel="icon" href="/icon.svg">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', sans-serif; color: #1a1a2e; line-height: 1.6; }
+    
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; padding: 80px 24px; text-align: center;
+      min-height: 90vh; display: flex; flex-direction: column;
+      justify-content: center; align-items: center;
+    }
+    .hero h1 { font-size: 3rem; font-weight: 800; margin-bottom: 16px; max-width: 800px; }
+    .hero p { font-size: 1.25rem; opacity: 0.9; max-width: 600px; margin-bottom: 32px; }
+    .hero .cta-group { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    .btn { display: inline-block; padding: 14px 32px; border-radius: 12px; font-weight: 600; font-size: 1rem; text-decoration: none; transition: transform 0.2s, box-shadow 0.2s; }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.2); }
+    .btn-white { background: white; color: #667eea; }
+    .btn-outline { border: 2px solid white; color: white; background: transparent; }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .btn-primary:hover { box-shadow: 0 8px 25px rgba(102,126,234,0.4); }
+
+    /* Features */
+    .features { padding: 80px 24px; background: #f8f9fa; }
+    .features h2 { text-align: center; font-size: 2rem; margin-bottom: 48px; }
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 32px; max-width: 1100px; margin: 0 auto; }
+    .feature-card { background: white; padding: 32px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); text-align: center; }
+    .feature-card .icon { font-size: 3rem; margin-bottom: 16px; }
+    .feature-card h3 { font-size: 1.25rem; margin-bottom: 8px; }
+    .feature-card p { color: #666; font-size: 0.95rem; }
+
+    /* How it works */
+    .how { padding: 80px 24px; }
+    .how h2 { text-align: center; font-size: 2rem; margin-bottom: 48px; }
+    .steps { display: flex; gap: 32px; max-width: 1000px; margin: 0 auto; flex-wrap: wrap; justify-content: center; }
+    .step { flex: 1; min-width: 200px; text-align: center; }
+    .step .num { display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; font-size: 1.5rem; font-weight: 800; margin-bottom: 16px; }
+    .step h3 { font-size: 1.1rem; margin-bottom: 8px; }
+    .step p { color: #666; font-size: 0.95rem; }
+
+    /* Pricing */
+    .pricing { padding: 80px 24px; background: #f8f9fa; }
+    .pricing h2 { text-align: center; font-size: 2rem; margin-bottom: 16px; }
+    .pricing .subtitle { text-align: center; color: #666; margin-bottom: 48px; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 32px; max-width: 1000px; margin: 0 auto; }
+    .price-card { background: white; border-radius: 16px; padding: 40px 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); text-align: center; position: relative; }
+    .price-card.popular { border: 3px solid #667eea; }
+    .price-card.popular::before { content: 'Paling Populer'; position: absolute; top: -14px; left: 50%; transform: translateX(-50%); background: #667eea; color: white; padding: 4px 16px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+    .price-card h3 { font-size: 1.5rem; margin-bottom: 8px; }
+    .price-card .price { font-size: 2.5rem; font-weight: 800; color: #667eea; }
+    .price-card .price span { font-size: 1rem; font-weight: 400; color: #666; }
+    .price-card .desc { color: #666; margin-bottom: 24px; }
+    .price-card ul { list-style: none; text-align: left; margin-bottom: 32px; }
+    .price-card ul li { padding: 8px 0; border-bottom: 1px solid #eee; }
+    .price-card ul li::before { content: '✓ '; color: #667eea; font-weight: 700; }
+
+    /* CTA */
+    .cta { padding: 80px 24px; text-align: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .cta h2 { font-size: 2rem; margin-bottom: 16px; }
+    .cta p { margin-bottom: 32px; opacity: 0.9; }
+
+    /* Footer */
+    footer { padding: 40px 24px; text-align: center; color: #666; font-size: 0.9rem; }
+    footer a { color: #667eea; text-decoration: none; }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      .hero h1 { font-size: 2rem; }
+      .hero p { font-size: 1rem; }
+      .pricing-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<section class="hero">
+  <h1>Photobooth Tanpa Ribet, Langsung Siap Pakai</h1>
+  <p>Daftar dalam 2 menit, langsung cetak foto receipt dalam hitungan detik. Mulai dari Rp 30.000/bulan.</p>
+  <div class="cta-group">
+    <a href="#pricing" class="btn btn-white">Lihat Harga</a>
+    <a href="https://admin.achipix.web.id/#/register" class="btn btn-outline">Daftar Gratis</a>
+  </div>
+</section>
+
+<!-- Pain Points -->
+<section class="features" id="pain">
+  <h2>Mau Punya Photobooth Tapi…</h2>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="icon">💰</div>
+      <h3>Modal Terlalu Mahal?</h3>
+      <p>Sekarang bisa mulai dari Rp 30.000/bulan. Tidak perlu beli booth jutaan rupiah.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🧑‍💼</div>
+      <h3>Ribet & Butuh Operator?</h3>
+      <p>Otomatis! Cukup buka di HP atau tablet, tamu langsung pakai sendiri tanpa bantuan.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📉</div>
+      <h3>Susah Balik Modal?</h3>
+      <p>Harga per cetak bisa Anda tentukan sendiri. Beberapa event saja sudah balik modal.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features" id="features">
+  <h2>Semua yang Kamu Butuhkan dalam Satu Booth</h2>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="icon">📸</div>
+      <h3>Cetak Instan ala Receipt</h3>
+      <p>Foto langsung jadi struk thermal printer dalam hitungan detik.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">💳</div>
+      <h3>Pembayaran QRIS Otomatis</h3>
+      <p>Tamu bayar dari layar booth. QRIS otomatis, tidak perlu operator.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🤖</div>
+      <h3>AI Photo Strip</h3>
+      <p>Ubah foto jadi sketsa atau efek seni otomatis dengan AI.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🎫</div>
+      <h3>Sistem Voucher & Promo</h3>
+      <p>Buat kode promo, diskon khusus event, atau penawaran menarik.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🎨</div>
+      <h3>Frame & Tema Custom</h3>
+      <p>Kustom warna, logo, tagline, dan frame sesuai kebutuhan event.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📱</div>
+      <h3>Hasil Digital + Download</h3>
+      <p>QR code untuk download foto langsung ke HP tamu.</p>
+    </div>
+  </div>
+</section>
+
+<!-- How It Works -->
+<section class="how" id="how">
+  <h2>Bagaimana Cara Kerjanya?</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="num">1</div>
+      <h3>Daftar & Pilih Paket</h3>
+      <p>Buat akun gratis dan pilih paket yang sesuai kebutuhan Anda.</p>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <h3>Atur Branding</h3>
+      <p>Upload logo, pilih frame, atur warna dan tagline sesuai event.</p>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <h3>Buka di HP/Tablet</h3>
+      <p>Buka booth di perangkat apapun. Langsung siap tanpa install.</p>
+    </div>
+    <div class="step">
+      <div class="num">4</div>
+      <h3>Foto → Bayar → Cetak → Selesai!</h3>
+      <p>Tamu foto, bayar QRIS, cetak receipt, download digital. Semua otomatis.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Pricing -->
+<section class="pricing" id="pricing">
+  <h2>Pilih Paket yang Tepat</h2>
+  <p class="subtitle">Harga per tenant (1 booth). Bayar bulanan, batalkan kapan saja.</p>
+  <div class="pricing-grid">
+    <div class="price-card">
+      <h3>Starter</h3>
+      <div class="price">Rp 30k<span>/bulan</span></div>
+      <p class="desc">Cocok untuk mulai usaha photobooth</p>
+      <ul>
+        <li>100 foto/bulan</li>
+        <li>3 frame custom</li>
+        <li>3 design strip</li>
+        <li>3 preset mode</li>
+        <li>QR Share</li>
+        <li>AI Photo Strip</li>
+        <li>Support via chat</li>
+      </ul>
+      <a href="https://admin.achipix.web.id/#/register" class="btn btn-primary" style="width:100%">Pilih Starter</a>
+    </div>
+    <div class="price-card popular">
+      <h3>Pro</h3>
+      <div class="price">Rp 49k<span>/bulan</span></div>
+      <p class="desc">Untuk vendor aktif & event organizer</p>
+      <ul>
+        <li>500 foto/bulan</li>
+        <li>10 frame custom</li>
+        <li>10 design strip</li>
+        <li>10 preset mode</li>
+        <li>QR Share</li>
+        <li>AI Photo Strip</li>
+        <li>Voucher & Promo</li>
+        <li>Priority support</li>
+      </ul>
+      <a href="https://admin.achipix.web.id/#/register" class="btn btn-primary" style="width:100%">Pilih Pro</a>
+    </div>
+    <div class="price-card">
+      <h3>Premium</h3>
+      <div class="price">Rp 99k<span>/bulan</span></div>
+      <p class="desc">Untuk studio & multi-event</p>
+      <ul>
+        <li>Unlimited foto</li>
+        <li>50 frame custom</li>
+        <li>50 design strip</li>
+        <li>50 preset mode</li>
+        <li>QR Share</li>
+        <li>AI Photo Strip</li>
+        <li>Voucher & Promo</li>
+        <li>Custom domain</li>
+        <li>Dedicated support</li>
+      </ul>
+      <a href="https://admin.achipix.web.id/#/register" class="btn btn-primary" style="width:100%">Pilih Premium</a>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta">
+  <h2>Siap Memulai Bisnis Photobooth?</h2>
+  <p>Daftar gratis sekarang dan mulai cetak foto dalam hitungan menit.</p>
+  <div class="cta-group">
+    <a href="https://admin.achipix.web.id/#/register" class="btn btn-white">Daftar Gratis</a>
+    <a href="https://admin.achipix.web.id/#/login" class="btn btn-outline">Masuk ke Dashboard</a>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <p>&copy; 2026 Achipix. All rights reserved. | <a href="https://admin.achipix.web.id/#/login">Login</a></p>
+</footer>
+
+</body>
+</html>

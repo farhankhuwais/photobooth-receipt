@@ -1,0 +1,23 @@
+# docker-compose.dev.yml — override DEV (JANGAN dipakai untuk production).
+#
+# Tujuan: backend auto-restart saat file .mjs diedit, tanpa rebuild image tiap perubahan.
+# Frontend cukup pakai Vite dev server (booth :5173, admin :5174) yang sudah nge-proxy
+# /api, /portal, /u ke container ini di host :8099.
+#
+# Cara pakai (sekali saja; setelah itu edit .mjs -> node --watch auto restart):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Kembali ke prod (tanpa override):
+#   docker compose up -d --build --force-recreate
+#
+# Catatan: volume di bawah read-only (`:ro`) — source runtime di-bind dari host.
+# Port, env, network, dan guard tetap diwarisi dari docker-compose.yml (tidak diubah).
+
+services:
+  photobooth:
+    command: node --watch serve.mjs
+    volumes:
+      - ./serve.mjs:/app/serve.mjs:ro
+      - ./db.mjs:/app/db.mjs:ro
+      - ./admin-api.mjs:/app/admin-api.mjs:ro
+      - ./src/lib/licenseUtil.js:/app/src/lib/licenseUtil.js:ro

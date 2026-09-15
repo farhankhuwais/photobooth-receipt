@@ -1,10 +1,14 @@
 import { useEffect, useId, useState } from 'react'
 
+// Jenis error gate PIN — dipetakan ke string i18n di PinGate.tsx.
+// `message` opsional = pesan dinamis dari server (ditampilkan apa adanya).
+export type PinGateError = 'check' | 'verify' | 'network'
+
 type PinGateState =
   | { status: 'idle' }
   | { status: 'required' }
   | { status: 'ok' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; code: PinGateError; message?: string }
 
 export function usePinGate() {
   const [state, setState] = useState<PinGateState>({ status: 'idle' })
@@ -23,7 +27,7 @@ export function usePinGate() {
       })
       .catch(() => {
         if (cancelled) return
-        setState({ status: 'error', message: 'Gagal memeriksa status PIN' })
+        setState({ status: 'error', code: 'check' })
       })
     return () => { cancelled = true }
   }, [])
@@ -37,11 +41,15 @@ export function usePinGate() {
         body: JSON.stringify({ pin }),
       })
       const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(j.error || 'Gagal verifikasi PIN')
+      if (!r.ok) {
+        const message = typeof j?.error === 'string' && j.error ? j.error : undefined
+        setState({ status: 'error', code: 'verify', message })
+        return
+      }
       localStorage.setItem('pb_tenant_pin', pin)
       setState({ status: 'ok' })
-    } catch (err) {
-      setState({ status: 'error', message: err instanceof Error ? err.message : 'PIN salah' })
+    } catch {
+      setState({ status: 'error', code: 'network' })
     }
   }
 

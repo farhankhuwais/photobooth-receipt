@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import SaveIcon from '@mui/icons-material/Save'
 import { api } from '@/api/client'
+import type { BoothLang } from '@/types'
 import { useAuth } from '@/context/AuthContext'
 
 // Limit ukuran file (sebelum base64, base64 = ~1.37x byte)
@@ -319,6 +320,8 @@ interface Branding {
   attractTagline?: string | null
   // Custom teks tombol attract (default "Sentuh untuk mulai")
   attractCtaText?: string | null
+  // Bahasa booth per akun ('id' default, 'en' English). Dibaca booth via /api/config.
+  lang?: BoothLang
 }
 
 interface AppConfig {
@@ -965,6 +968,28 @@ export default function Settings() {
                         ),
                       }}
                     />
+                  </Box>
+
+                  {/* ── Bahasa Booth ─────────────────────────── */}
+                  <Box sx={{ border: '1px solid #f0f0f0', borderRadius: 1.5, p: 1.5, bgcolor: '#fff' }}>
+                    <Typography variant="caption" fontWeight={600} sx={{ textTransform: 'uppercase', letterSpacing: 0.5, color: 'text.secondary', display: 'block', mb: 1 }}>
+                      Bahasa Booth
+                    </Typography>
+                    <FormControl fullWidth size="small">
+                      <InputLabel id="booth-lang-label">Bahasa Booth</InputLabel>
+                      <Select
+                        labelId="booth-lang-label"
+                        label="Bahasa Booth"
+                        value={b.lang || 'id'}
+                        onChange={(e) => setBranding({ lang: e.target.value as BoothLang })}
+                      >
+                        <MenuItem value="id">Indonesia</MenuItem>
+                        <MenuItem value="en">English</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                      Bahasa yang dipakai di aplikasi booth. Simpan untuk menerapkan.
+                    </Typography>
                   </Box>
 
                   {/* ── Tampilkan di Hasil ─────────────────────────── */}

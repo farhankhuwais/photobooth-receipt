@@ -12,6 +12,10 @@ import { queueStrip, syncOutbox, outboxCount } from './modules/offline/outbox'
 import { fetchAiStatus } from './modules/camera/aiSketch'
 import PinGate from './modules/pin/PinGate'
 import LicenseGate from './components/LicenseGate'
+import TenantStatusGate, { type TenantStatus, normalizeTenantStatus } from './components/TenantStatusGate'
+import UnlockGate from './components/UnlockGate'
+import { useKiosk } from './modules/kiosk/useKiosk'
+import { setLang } from './modules/i18n/useLang'
 
 // ── License data shape (must match LicenseGate.tsx) ────────────────────────
 interface LicenseData {
@@ -83,6 +87,21 @@ export default function App() {
   const [online, setOnline] = useState<boolean>(navigator.onLine)
   const [outboxN, setOutboxN] = useState<number>(0)
   const [aiEnabled, setAiEnabled] = useState<boolean>(false)
+
+  // Status tenant dari /api/config — TenantStatusGate blokir booth kalau
+  // pending/rejected/expired/suspended. Default null = belum diketahui (loading)
+  // supaya booth TIDAK pernah kebuka sebelum config pertama tiba.
+  const [tenantStatus, setTenantStatus] = useState<{ status: TenantStatus | null; trialEndsAt: string | null; subscriptionEndsAt: string | null; message: string | null }>({ status: null, trialEndsAt: null, subscriptionEndsAt: null, message: null })
+
+  // Status pairing device ↔ tenant dari /api/config (field `device_paired`).
+  //   true → ter-pair · false → tampil layar pairing · null/undefined → fitur nonaktif (booth normal).
+  const [devicePaired, setDevicePaired] = useState<boolean | null | undefined>(undefined)
+
+  // True begitu GET /api/config pertama sukses — penanda buat fullscreen kiosk.
+  const [configReady, setConfigReady] = useState(false)
+
+  // Full kiosk mode (fullscreen, wake lock, blokir gesture) — aktif setelah config OK.
+  useKiosk(configReady)
 
   // Cek status AI sketch (aktif kalau operator isi API key + enable di Settings).
   useEffect(() => {
@@ -232,9 +251,49 @@ export default function App() {
       // Tambah cache-buster query agar response selalu fresh,
       // meskipun server sudah kirim cache-control: no-cache.
       const r = await fetch('/api/config?t=' + Date.now())
-      if (!r.ok) return
+      if (!r.ok) {
+        // 403 = akun diblokir (pending/rejected). Jangan buka booth: biarkan
+        // status unknown (layar loading/blokir) + tampilkan pesan server apa adanya.
+        if (r.status === 403) {
+          const body = await r.json().catch(() => null)
+          const parsed = normalizeTenantStatus(body?.tenant_status ?? body?.status)
+          // 403 = pasti diblokir: jangan pernah jatuh ke 'active'/'trial'.
+          const blocked = parsed && parsed !== 'active' && parsed !== 'trial' ? parsed : null
+          const serverMsg =
+            typeof body?.message === 'string' ? body.message
+            : typeof body?.error === 'string' ? body.error
+            : null
+          setTenantStatus((prev) =>
+            prev.status === blocked && prev.message === serverMsg && prev.trialEndsAt === null && prev.subscriptionEndsAt === null
+              ? prev
+              : { status: blocked, trialEndsAt: null, subscriptionEndsAt: null, message: serverMsg }
+          )
+        }
+        return
+      }
       const cfg = await r.json()
+      setConfigReady(true)
+      // Bahasa booth dari config (`lang`), fallback ke branding.lang lalu 'id'.
+      setLang(cfg.lang ?? cfg.branding?.lang ?? 'id')
+      // Status tenant (trial/active/expired/suspended/pending/rejected) — polling ini
+      // yang bikin booth otomatis pindah ke layar blokir kalau status berubah.
+      // Response 200 = tidak diblokir server; tenant_status tak dikenal/null → 'active'.
+      const ts = normalizeTenantStatus(cfg.tenant_status) ?? 'active'
+      const trialEndsAt = typeof cfg.trial_ends_at === 'string' ? cfg.trial_ends_at : null
+      const subscriptionEndsAt = typeof cfg.subscription_ends_at === 'string' ? cfg.subscription_ends_at : null
+      // Hanya update kalau ada perubahan — biar polling 5s gak rerender App terus.
+      setTenantStatus((prev) =>
+        prev.status === ts && prev.trialEndsAt === trialEndsAt && prev.subscriptionEndsAt === subscriptionEndsAt && prev.message === null
+          ? prev
+          : { status: ts, trialEndsAt, subscriptionEndsAt, message: null }
+      )
       const st = useSession.getState()
+      // Status pairing device (true/false/null). Update hanya saat berubah biar
+      // polling 5s gak rerender App terus. Ini juga yang bikin revoke otomatis:
+      // owner putus device → poll berikutnya device_paired:false → UnlockGate balik.
+      const nextPaired: boolean | null =
+        cfg.device_paired === true ? true : cfg.device_paired === false ? false : null
+      setDevicePaired((prev) => (prev === nextPaired ? prev : nextPaired))
       st.setMode(cfg.mode === 'event' ? 'event' : 'regular')
       st.setPrice(Number(cfg.price) || 5000)
       st.setActivePreset(cfg.preset_name || null)
@@ -636,6 +695,16 @@ export default function App() {
   // ... existing code ...
 
   return (
+    <TenantStatusGate
+      status={tenantStatus.status}
+      trialEndsAt={tenantStatus.trialEndsAt}
+      subscriptionEndsAt={tenantStatus.subscriptionEndsAt}
+      message={tenantStatus.message}
+    >
+    <UnlockGate
+      paired={devicePaired}
+      onUnlocked={() => { setDevicePaired(true); loadConfig() }}
+    >
     <div className="text-black min-h-screen flex flex-col font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container" style={{ backgroundColor: branding.primaryColor || '#FFE600' }}>
       <PinGate />
       {screen === 'attract' ? (
@@ -1306,6 +1375,8 @@ export default function App() {
         </div>
       )}
     </div>
+    </UnlockGate>
+    </TenantStatusGate>
   )
 }
 

@@ -163,7 +163,7 @@ Schema auto-init di `db.mjs` (`initDb()` yang memanggil `migrate()`), dijalankan
 | `tenants` | Slug PK (+ kolom `id` UUID), name, active, `access_pin`, `owner_user_id` |
 | `admin_user` | User (email, password_hash `scrypt:`, role, tenant_id, name, active, `code` akses, `pricing_tier_id`, max_tenants) |
 | `admin_sessions` | Session cookie httpOnly (TTL 8 jam, 30 hari kalau remember-me) |
-| `admin_audit_log` | Audit trail (action, target, metadata, ip, ua, user_id, tenant_slug) |
+| `admin_audit_log` | Audit trail (action, target, ip, ua, user_id, tenant_slug; `metadata` tidak dicatat, aksi noise tinggi tidak tercatat via `AUDIT_DISABLED_ACTIONS`) |
 | `admin_login_attempts` | Rate-limit login |
 | `pricing_tiers` | Basic/Premium/Profesional (max_tenants, max_photos, max_frames, max_designs, max_presets) |
 | `photos` | Strip hasil (id=timestamp.png, data BYTEA, tenant_id) |
@@ -252,6 +252,24 @@ docker compose up -d --build --force-recreate
 > Kalau bundle tidak berubah walau source berubah → tambah `--no-cache` (bukan ganti flag).
 > Env lain yang di-set compose: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `PB_DEFAULT_TENANT=booth`, `PGHOST=postgres-kontrakan`.
 > Host port `8099` → container `8080`. Postgres **external** (`photobooth-net`, `external: true`).
+
+### Development cepat (tanpa rebuild)
+
+```bash
+# Frontend — Vite HMR, sudah di-proxy ke API container :8099 (tidak perlu rebuild)
+npm run dev                 # booth  http://localhost:5173
+cd admin && npm run dev     # admin  http://localhost:5174
+
+# Backend — sekali saja; setelah itu `node --watch` auto-restart saat .mjs berubah
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# Balik ke prod (tanpa override dev)
+docker compose up -d --build --force-recreate
+```
+
+> `docker-compose.dev.yml` meng-bind source runtime (`serve.mjs`, `db.mjs`, `admin-api.mjs`,
+> `src/lib/licenseUtil.js`) + `command: node --watch serve.mjs`. Frontend booth/admin cukup
+> pakai Vite dev server; proxy `/api`, `/portal`, `/u` diarahkan ke container di host `:8099`.
 
 ### Verifikasi setelah deploy
 

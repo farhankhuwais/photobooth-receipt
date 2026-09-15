@@ -16,10 +16,10 @@
 //    Mitigation: Adequate for consumer tablets; enterprise can add hardware binding.
 
 import { useState, useEffect } from 'react';
+import { getOrCreateDeviceFp } from '../modules/device/fingerprint';
 import './LicenseGate.css';
 
 const LICENSE_STORAGE_KEY = 'pb_license_v1';
-const DEVICE_FP_KEY = 'pb_device_fp';
 
 interface LicenseData {
   vendorId: string;
@@ -57,30 +57,6 @@ function parseLicenseCode(code: string): { vendorId: string; expiryMs: number; p
   if (isNaN(expiryMs)) return null;
   const vendorId = remainder.slice(0, -(m[1].length + 2));
   return { vendorId, expiryMs, providedHmac };
-}
-
-function generateDeviceFingerprint(): string {
-  let fp = localStorage.getItem(DEVICE_FP_KEY);
-  if (fp) return fp;
-
-  // Build fingerprint from browser characteristics
-  const components = [
-    navigator.userAgent,
-    navigator.language,
-    `${screen.width}x${screen.height}`,
-    screen.colorDepth,
-    new Date().getTimezoneOffset(),
-    crypto.randomUUID(),
-  ];
-  let hash = 0;
-  const str = components.join('|');
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i);
-    hash = ((hash << 5) - hash + ch) | 0;
-  }
-  fp = Math.abs(hash).toString(36) + '-' + crypto.randomUUID().slice(0, 8);
-  localStorage.setItem(DEVICE_FP_KEY, fp);
-  return fp;
 }
 
 function getStoredLicense(): LicenseData | null {
@@ -124,7 +100,7 @@ export default function LicenseGate({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'error' | 'success' | 'info'; text: string } | null>(null);
   const [active, setActive] = useState<LicenseData | null>(null);
-  const fp = generateDeviceFingerprint();
+  const fp = getOrCreateDeviceFp();
 
   // Check stored license on mount
   useEffect(() => {

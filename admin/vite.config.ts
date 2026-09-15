@@ -11,7 +11,14 @@ export default defineConfig({
   server: {
     host: true,
     port: 5174,
-    allowedHosts: ['admin.achipix.web.id', 'localhost', '127.0.0.1'],
+    allowedHosts: ['admin.achipix.web.id', '.trycloudflare.com', 'localhost', '127.0.0.1'],
+    // Dev: proxy ke backend di container (host port 8099) supaya `npm run dev`
+    // tidak perlu rebuild image. Tidak dipakai saat production build.
+    proxy: {
+      '/api': { target: 'http://localhost:8099', changeOrigin: true },
+      '/portal': { target: 'http://localhost:8099', changeOrigin: true },
+      '/u': { target: 'http://localhost:8099', changeOrigin: true },
+    },
   },
   build: {
     outDir: path.resolve(__dirname, '../dist/admin'),

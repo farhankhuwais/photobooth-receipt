@@ -37,27 +37,81 @@ const DEFAULT_CONFIG = {
 // Default tenant slug untuk public access (single-instance fallback).
 export const DEFAULT_TENANT = process.env.PB_DEFAULT_TENANT || 'default'
 
-// Resolve tenant dari request hostname: {nama-customer}.achipix.web.id -> slug
-// Return null jika subdomain tidak dikenaldi/disabled.
-// Root domain constant — serves admin dashboard
+// Resolve tenant dari request hostname + device fingerprint.
+// Booth app kini jalan di SATU domain (mis. app.achipix.web.id) dan tenant
+// ditentukan dari device yang sudah di-pair; subdomain {slug}.* tetap jalan
+// sebagai alias opsional. Return null kalau device dikirim tapi belum di-pair
+// dan tidak ada subdomain match (biar booth tampilkan layar pairing).
 const ROOT_DOMAIN = 'achipix.web.id'
 const ADMIN_SUBDOMAIN = 'admin'
 
-export async function resolveTenant(hostname = '') {
+// Batas panjang device fingerprint (header bisa panjang tak terduga → keamanan).
+const DEVICE_FP_MAX = 128
+function normDeviceFp(fp) {
+  if (!fp) return ''
+  return String(fp).trim().slice(0, DEVICE_FP_MAX)
+}
+
+// Cari tenant dari device fingerprint yang sudah di-pair (is_active=true).
+// Return slug atau null. Dipakai sebagai prioritas utama routing booth.
+export async function resolveTenantByDevice(deviceFp) {
+  const fp = normDeviceFp(deviceFp)
+  if (!fp) return null
+  try {
+    const { rows } = await pool.query(
+      `SELECT bd.tenant_slug
+       FROM booth_devices bd
+       JOIN tenants t ON t.slug = bd.tenant_slug
+       WHERE bd.device_fp = $1 AND bd.is_active = true AND t.active = true
+         AND t.status NOT IN ('pending', 'rejected')
+       ORDER BY bd.paired_at DESC NULLS LAST, bd.id DESC
+       LIMIT 1`,
+      [fp]
+    )
+    return rows[0]?.tenant_slug || null
+  } catch {
+    return null
+  }
+}
+
+export async function resolveTenant(hostname = '', deviceFp = null) {
   const h = String(hostname).split(':')[0].toLowerCase()
   if (!h) return DEFAULT_TENANT
   const parts = h.split('.')
   const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || /^localhost$/.test(h) || parts.length === 1
-  // Root domain (achipix.web.id) or bare IP/localhost → serve admin dashboard
-  if (h === ROOT_DOMAIN || isIp) return 'admin'
+  const fp = normDeviceFp(deviceFp)
+  // Prioritas BARU: device fingerprint. Device yang sudah di-pair → tenant-nya,
+  // apapun host-nya (device-based routing). Dipasang SEBELUM shortcut localhost/IP
+  // agar booth bisa di-test via localhost:5173 (hanya booth yang mengirim fp;
+  // admin SPA tidak pernah mengirim header X-Device-Fp).
+  if (fp) {
+    const byDevice = await resolveTenantByDevice(fp)
+    if (byDevice) return byDevice
+  }
+
+  // Root domain (achipix.web.id) or bare IP/localhost → serve admin dashboard.
+  // TAPI: request dengan device fp yang tak dikenal (device booth belum di-pair)
+  // → null supaya booth menampilkan layar pairing (localhost/IP ikut rule ini,
+  // karena hanya booth app yang mengirim X-Device-Fp; admin SPA tidak).
+  if (h === ROOT_DOMAIN || isIp) return fp ? null : 'admin'
   // admin.achipix.web.id → admin dashboard (subdomain)
   if (parts[0] === ADMIN_SUBDOMAIN && parts[1] === 'achipix') return 'admin'
-  // *.achipix.web.id → booth tenant (slug = subdomain)
+
+  // *.achipix.web.id → booth tenant (slug = subdomain) — alias opsional.
   const slug = parts[0]
   if (!slug) return DEFAULT_TENANT
   try {
-    const { rows } = await pool.query('SELECT slug FROM tenants WHERE slug = $1 AND active = true', [slug])
-    return rows.length ? slug : DEFAULT_TENANT
+    const { rows } = await pool.query(
+      `SELECT slug FROM tenants
+       WHERE slug = $1 AND active = true AND status NOT IN ('pending', 'rejected')`,
+      [slug]
+    )
+    if (rows.length) return slug
+    // Device dikirim tapi belum di-pair & tidak ada subdomain match (mis. app.*)
+    // → null supaya booth menampilkan layar pairing, bukan fallback default.
+    if (fp) return null
+    // Host tak dikenal TANPA fp → fallback lama (deployment existing tetap jalan).
+    return DEFAULT_TENANT
   } catch {
     return null
   }
@@ -110,6 +164,30 @@ export async function initDb() {
         CREATE INDEX IF NOT EXISTS tenants_owner_idx ON tenants (owner_user_id);
       END IF;
     END $$;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tenants' AND column_name = 'status') THEN
+        ALTER TABLE tenants ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+      END IF;
+    END $$;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tenants' AND column_name = 'trial_ends_at') THEN
+        ALTER TABLE tenants ADD COLUMN trial_ends_at TIMESTAMPTZ NULL;
+      END IF;
+    END $$;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tenants' AND column_name = 'subscription_ends_at') THEN
+        ALTER TABLE tenants ADD COLUMN subscription_ends_at TIMESTAMPTZ NULL;
+      END IF;
+    END $$;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'tenants' AND column_name = 'grace_period_ends_at') THEN
+        ALTER TABLE tenants ADD COLUMN grace_period_ends_at TIMESTAMPTZ NULL;
+      END IF;
+    END $$;
     CREATE TABLE IF NOT EXISTS photos (
       id          TEXT PRIMARY KEY,
       tenant_id   TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
@@ -158,7 +236,7 @@ export async function initDb() {
       id              SERIAL PRIMARY KEY,
       email           TEXT NOT NULL UNIQUE,
       password_hash   TEXT NOT NULL,
-      role            TEXT NOT NULL DEFAULT 'super_admin',  -- super_admin | tenant_admin | tenant_user
+      role            TEXT NOT NULL DEFAULT 'super_admin',  -- super_admin | tenant_admin
       tenant_id       TEXT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
       name            TEXT NULL,
       active          BOOLEAN NOT NULL DEFAULT true,
@@ -175,6 +253,15 @@ export async function initDb() {
       expires_at  TIMESTAMPTZ NOT NULL
     );
     CREATE INDEX IF NOT EXISTS admin_sessions_expires_idx ON admin_sessions (expires_at);
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id          TEXT PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES admin_user(id) ON DELETE CASCADE,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at  TIMESTAMPTZ NOT NULL,
+      remember    BOOLEAN NOT NULL DEFAULT false
+    );
+    CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions (user_id, expires_at DESC);
+    CREATE INDEX IF NOT EXISTS user_sessions_expires_idx ON user_sessions (expires_at);
     CREATE TABLE IF NOT EXISTS admin_audit_log (
       id          BIGSERIAL PRIMARY KEY,
       user_id     INTEGER NULL REFERENCES admin_user(id) ON DELETE SET NULL,
@@ -290,12 +377,90 @@ export async function initDb() {
   `)
   await pool.query(`CREATE INDEX IF NOT EXISTS license_codes_code_hash_idx ON license_codes(code_hash)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS license_codes_vendor_id_idx ON license_codes(vendor_id)`)
+  // Helper functions
+function sanitizeVendorId(vendorId) {
+  return String(vendorId).replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+}
+
+function sanitizeSlug(vendorId) {
+  return String(vendorId).replace(/@.*/, '').replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().replace(/-+/g, '-').replace(/^-|-$/g, '')
+}
+
+// ──────────────────────── User Session Helpers ────────────────────────
+  // Migration: add for_user_id for 1:1 code-to-user binding
+  await pool.query(`ALTER TABLE license_codes ADD COLUMN IF NOT EXISTS for_user_id INTEGER REFERENCES admin_user(id) ON DELETE SET NULL`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS license_codes_for_user_idx ON license_codes(for_user_id)`)
+  // Migration: store plaintext code so admin can re-copy a generated code
+  await pool.query(`ALTER TABLE license_codes ADD COLUMN IF NOT EXISTS code_plain TEXT`)
+  // Migration: simpan user penerima kode (dipakai markLicenseRedeemed). Sebelumnya
+  // kolom ini direferensikan query tapi tak pernah dibuat → query throw.
+  await pool.query(`ALTER TABLE license_codes ADD COLUMN IF NOT EXISTS redeemed_user_id INTEGER REFERENCES admin_user(id)`)
+  // Migration: kode aktivasi 6 char (flow baru) tidak pakai HMAC → secret_version boleh NULL.
+  await pool.query(`ALTER TABLE license_codes ALTER COLUMN secret_version DROP NOT NULL`)
+
+  // ── Access codes: 6-char alphanumeric codes for tablet pairing ────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS access_codes (
+      id          SERIAL PRIMARY KEY,
+      tenant_slug TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
+      code        TEXT NOT NULL UNIQUE,
+      active      BOOLEAN NOT NULL DEFAULT true,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at  TIMESTAMPTZ NULL,
+      used_at     TIMESTAMPTZ NULL
+    )
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS access_codes_code_idx ON access_codes(code)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS access_codes_tenant_idx ON access_codes(tenant_slug)`)
+  // Migration: simpan device fingerprint pemakai kode (single-use) — dipakai dashboard.
+  await pool.query(`ALTER TABLE access_codes ADD COLUMN IF NOT EXISTS used_by_fp TEXT`)
+
+  // ── Booth devices: tablet yang sudah di-pair ke tenant ─────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS booth_devices (
+      id SERIAL PRIMARY KEY,
+      tenant_slug TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
+      device_fp TEXT NOT NULL,
+      device_name TEXT,
+      last_seen_at TIMESTAMPTZ,
+      last_ip TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      paired_at TIMESTAMPTZ DEFAULT now(),
+      UNIQUE (tenant_slug, device_fp)
+    )
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS booth_devices_tenant_idx ON booth_devices (tenant_slug)`)
+
+  // ── Subscription payments (Midtrans Snap, self-pay dari dashboard) ─────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS subscription_payments (
+      id          SERIAL PRIMARY KEY,
+      tenant_slug TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
+      order_id    TEXT NOT NULL UNIQUE,
+      amount      INTEGER NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'pending',   -- pending|paid|failed|expired
+      snap_token  TEXT,
+      created_at  TIMESTAMPTZ DEFAULT now(),
+      paid_at     TIMESTAMPTZ
+    )
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS subscription_payments_tenant_idx ON subscription_payments (tenant_slug, created_at DESC)`)
+
+  // ── Notifikasi (email + WhatsApp): trial H-3 & masa expired ────────────────
+  await pool.query(`ALTER TABLE admin_user ADD COLUMN IF NOT EXISTS phone TEXT`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id          SERIAL PRIMARY KEY,
+      tenant_slug TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
+      kind        TEXT NOT NULL,          -- trial_reminder | expired_notice
+      channel     TEXT NOT NULL,          -- email | whatsapp
+      status      TEXT NOT NULL DEFAULT 'sent',
+      sent_at     TIMESTAMPTZ DEFAULT now(),
+      UNIQUE (tenant_slug, kind, channel)
+    )
+  `)
 
   // ── License secrets: versioned so rotation doesn't break existing codes ───
-  // Each code is signed with the current secret_version; on verify, we look up
-  // the secret for that specific version. Old secrets stay in the table for
-  // redemption of previously-issued codes. Set "current=false" on prior rows
-  // when rotating (so we know which one is "active" for new issues).
   await pool.query(`
     CREATE TABLE IF NOT EXISTS license_secrets (
       id            SERIAL PRIMARY KEY,
@@ -443,6 +608,50 @@ export async function destroySession(token) {
   if (!token) return
   await pool.query('DELETE FROM admin_sessions WHERE token = $1', [token])
 }
+
+// ──────────────────────── User Session Helpers ────────────────────────
+// Separate session namespace for end-users (register/login) — isolated from admin_session
+const USER_SESSION_DAYS = 30
+const USER_SESSION_DEFAULT_DAYS = 1
+
+export async function createUserSession(userId, remember = false) {
+  const token = crypto.randomBytes(32).toString('hex')
+  const days = remember ? USER_SESSION_DAYS : USER_SESSION_DEFAULT_DAYS
+  const expiresAt = new Date(Date.now() + days * 24 * 3600 * 1000)
+  await pool.query(
+    'INSERT INTO user_sessions (id, user_id, expires_at, remember) VALUES ($1, $2, $3, $4)',
+    [token, userId, expiresAt, remember]
+  )
+  return token
+}
+
+export async function getUserSessionUser(token) {
+  if (!token) return null
+  const { rows } = await pool.query(
+    `SELECT u.id, u.email, u.role, u.tenant_id, u.name, u.active, u.pricing_tier_id, u.code
+     FROM user_sessions s JOIN admin_user u ON u.id = s.user_id
+     WHERE s.id = $1 AND s.expires_at > now() LIMIT 1`,
+    [token]
+  )
+  if (!rows[0]) return null
+  if (rows[0].active === false) return null
+  return {
+    id: rows[0].id,
+    email: rows[0].email,
+    role: rows[0].role,
+    tenant_id: rows[0].tenant_id,
+    name: rows[0].name,
+    pricing_tier_id: rows[0].pricing_tier_id,
+    code: rows[0].code
+  }
+}
+
+export async function destroyUserSession(token) {
+  if (!token) return
+  await pool.query('DELETE FROM user_sessions WHERE id = $1', [token])
+}
+
+// ──────────────────────── Admin Session Helpers ────────────────────────
 
 export async function saveTransaction({ method, amount, template = null, note = null, preset = null, mode = 'regular', tenantId = DEFAULT_TENANT }) {
   const r = await pool.query(
@@ -747,19 +956,31 @@ export async function recentFailedLogins(email, windowMins = 15) {
 }
 
 export async function logAudit({ userId = null, tenantSlug = null, action, target = null, metadata = null, ip = null, ua = null }) {
+  if (AUDIT_DISABLED_ACTIONS.has(action)) return
   await pool.query(
-    `INSERT INTO admin_audit_log (user_id, tenant_slug, action, target, metadata, ip, ua)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [userId, tenantSlug, action, target, metadata, ip, ua]
+    `INSERT INTO admin_audit_log (user_id, tenant_slug, action, target, ip, ua)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [userId, tenantSlug, action, target, ip, ua]
   )
 }
+
+// Aksi noise tinggi: tidak tercatat agar log tetap ringkat.
+// Hapus entri di sini untuk mengaktifkan kembali pencatatan.
+const AUDIT_DISABLED_ACTIONS = new Set([
+  'logout',
+  'preset_upsert',
+  'design_create',
+  'design_update',
+  'photo_delete',
+  'audit_cleanup',
+])
 
 export async function listAudit({ limit = 100, offset = 0, tenantSlug = null, userId = null } = {}) {
   const where = []
   const params = []
   if (tenantSlug) { params.push(tenantSlug); where.push(`tenant_slug = $${params.length}`) }
   if (userId) { params.push(userId); where.push(`user_id = $${params.length}`) }
-  const sql = `SELECT id, user_id, tenant_slug, action, target, metadata, created_at
+  const sql = `SELECT id, user_id, tenant_slug, action, target, created_at
                FROM admin_audit_log
                ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
@@ -794,12 +1015,12 @@ export async function listTenantsWithStats({ search = '', limit = 500, offset = 
   return items
 }
 
-export async function createTenant({ slug, name, accessPin = null, ownerUserId = null }) {
+export async function createTenant({ slug, name, accessPin = null, ownerUserId = null, status = 'active', active = true }) {
   const r = await pool.query(
-    `INSERT INTO tenants (slug, name, access_pin, owner_user_id) VALUES ($1, $2, $3, $4)
+    `INSERT INTO tenants (slug, name, access_pin, owner_user_id, status, active) VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, access_pin = EXCLUDED.access_pin, updated_at = now()
-     RETURNING id, slug, name, active, access_pin, owner_user_id, created_at, updated_at`,
-    [String(slug).toLowerCase().trim(), name, accessPin, ownerUserId]
+     RETURNING id, slug, name, active, status, access_pin, owner_user_id, created_at, updated_at`,
+    [String(slug).toLowerCase().trim(), name, accessPin, ownerUserId, status, active]
   )
   return r.rows[0]
 }
@@ -825,6 +1046,34 @@ export async function isTenantOwner(tenantSlug, userId) {
   return r.rows.length > 0
 }
 
+// ── Approval registrasi vendor ──────────────────────────────────────────────
+// Daftar tenant yang masih 'pending' (hasil /api/auth/register) + email pendaftar.
+export async function listPendingRegistrations() {
+  const r = await pool.query(`
+    SELECT t.slug, t.name, t.status, t.created_at,
+           u.email AS owner_email, u.name AS owner_name
+    FROM tenants t
+    LEFT JOIN LATERAL (
+      SELECT email, name FROM admin_user
+      WHERE tenant_id = t.slug ORDER BY id ASC LIMIT 1
+    ) u ON true
+    WHERE t.status = 'pending'
+    ORDER BY t.created_at DESC
+  `)
+  return r.rows
+}
+
+// Tolak pendaftaran: status 'rejected' + active=false (tenant tetap ada, tidak aktif).
+export async function rejectTenantRegistration(slug) {
+  const r = await pool.query(
+    `UPDATE tenants SET status = 'rejected', active = false, updated_at = now()
+     WHERE slug = $1
+     RETURNING slug, name, status, active`,
+    [slug]
+  )
+  return r.rows[0] || null
+}
+
 export async function updateTenant(slug, { name = null, accessPin = undefined, active = undefined }) {
   const set = []
   const params = []
@@ -848,7 +1097,7 @@ export async function deleteTenant(slug) {
 export async function listUsers({ search = '', limit = 200, offset = 0 } = {}) {
   const where = []
   const params = []
-  if (search) { params.push(`%${search.toLowerCase()}%`); where.push(`(LOWER(email) LIKE $${params.length} OR LOWER(COALESCE(name, '')) LIKE $${params.length})`) }
+  if (search) { params.push(`%${search.toLowerCase()}%`); where.push(`(LOWER(u.email) LIKE $${params.length} OR LOWER(COALESCE(u.name, '')) LIKE $${params.length})`) }
   const sql = `
     SELECT u.id, u.email, u.role, u.tenant_id, u.name, u.active, u.last_login_at, u.created_at,
            u.code, u.pricing_tier_id,
@@ -863,7 +1112,7 @@ export async function listUsers({ search = '', limit = 200, offset = 0 } = {}) {
   params.push(limit, offset)
   const r = await pool.query(sql, params)
   const countR = await pool.query(
-    `SELECT COUNT(*)::int AS c FROM admin_user ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`,
+    `SELECT COUNT(*)::int AS c FROM admin_user u ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`,
     params.slice(0, params.length - 2)
   )
   return { items: r.rows, total: countR.rows[0].c }
@@ -1035,6 +1284,11 @@ export async function getTenantUsage(tenantSlug) {
 
 // Validasi resource create terhadap tier tenant. Return { ok: true } atau { ok: false, error: '...' }.
 export async function checkTierLimit(userIdForAuth, tenantSlug, resource) {
+  // Tenant pending/rejected = belum aktif → perlakukan seperti tidak aktif (blokir).
+  const eff = await getEffectiveTenantStatus(tenantSlug)
+  if (eff === 'pending' || eff === 'rejected') {
+    return { ok: false, error: 'Tenant belum aktif (menunggu persetujuan admin).' }
+  }
   const limit = await getUserTierLimit(userIdForAuth, tenantSlug)
   if (!limit) return { ok: true } // tanpa tier = unlimited
   const usage = await getTenantUsage(tenantSlug)
@@ -1058,14 +1312,14 @@ function hashLicenseCode(code) {
 }
 
 // Record a newly issued license code
-export async function recordLicenseCode({ code, vendorId, tierSlug, expiresAt, issuedBy, secretVersion = 1 }) {
+export async function recordLicenseCode({ code, vendorId, tierSlug, expiresAt, issuedBy, secretVersion = 1, forUserId = null }) {
   const codeHash = hashLicenseCode(code)
   const r = await pool.query(`
-    INSERT INTO license_codes (code_hash, vendor_id, tier_slug, expires_at, issued_by, secret_version)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO license_codes (code_hash, code_plain, vendor_id, tier_slug, expires_at, issued_by, secret_version, for_user_id)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     ON CONFLICT (code_hash) DO NOTHING
-    RETURNING id, code_hash, vendor_id, tier_slug, expires_at, issued_at
-  `, [codeHash, vendorId, tierSlug || null, expiresAt, issuedBy || null, secretVersion])
+    RETURNING id, code_hash, vendor_id, tier_slug, expires_at, issued_at, for_user_id
+  `, [codeHash, code, vendorId, tierSlug || null, expiresAt, issuedBy || null, secretVersion, forUserId])
   return r.rows[0] || null
 }
 
@@ -1094,18 +1348,46 @@ export async function listLicenseCodes({ limit = 100, offset = 0, vendorId = nul
   const limitIdx = params.length - 1
   const offsetIdx = params.length
   const r = await pool.query(`
-    SELECT lc.id, lc.code_hash, lc.vendor_id, lc.tier_slug, lc.expires_at,
+    SELECT lc.id, lc.code_hash, lc.code_plain, lc.vendor_id, lc.tier_slug, lc.expires_at,
            lc.issued_at, lc.issued_by, u1.email AS issued_by_email,
            lc.redeemed_at, lc.redeemed_by, lc.redeemed_tenant,
-           lc.revoked_at, lc.revoked_by, u2.email AS revoked_by_email, lc.active,
+           lc.revoked_at, lc.revoked_by, u2.email AS revoked_by_email,
+           lc.for_user_id, u3.email AS for_user_email, lc.active,
            COUNT(*) OVER() AS total_count
     FROM license_codes lc
     LEFT JOIN admin_user u1 ON u1.id = lc.issued_by
     LEFT JOIN admin_user u2 ON u2.id = lc.revoked_by
+    LEFT JOIN admin_user u3 ON u3.id = lc.for_user_id
     ${where}
     ORDER BY lc.issued_at DESC
     LIMIT $${limitIdx} OFFSET $${offsetIdx}
   `, params)
+  const total = r.rows.length > 0 ? Number(r.rows[0].total_count) : 0
+  return { items: r.rows, total }
+}
+
+// List kode aktivasi 6 char (code_plain IS NOT NULL) untuk tabel "Kode Aktivasi" di UI.
+// Sengaja dipisah dari listLicenseCodes supaya daftar lama (campur kode HMAC legacy)
+// tidak tersentuh. redeemed_by di tabel ini berisi email (TEXT), jadi di-JOIN by email;
+// kalau user-nya sudah dihapus, kita fallback ke nilai mentahnya.
+export async function listActivationCodes({ limit = 100, offset = 0 } = {}) {
+  const r = await pool.query(`
+    SELECT lc.id, lc.code_plain, lc.vendor_id, lc.tier_slug, lc.expires_at, lc.active,
+           lc.issued_at AS created_at, lc.issued_at,
+           lc.redeemed_at, lc.redeemed_tenant,
+           COALESCE(u_redeem.email, lc.redeemed_by) AS redeemed_by_email,
+           u_redeemed.email AS redeemed_user_email,
+           u_for.email AS for_user_email,
+           lc.for_user_id, lc.redeemed_user_id, lc.secret_version,
+           COUNT(*) OVER() AS total_count
+    FROM license_codes lc
+    LEFT JOIN admin_user u_redeem   ON u_redeem.email = lc.redeemed_by
+    LEFT JOIN admin_user u_redeemed ON u_redeemed.id = lc.redeemed_user_id
+    LEFT JOIN admin_user u_for      ON u_for.id = lc.for_user_id
+    WHERE lc.code_plain IS NOT NULL
+    ORDER BY lc.issued_at DESC
+    LIMIT $1 OFFSET $2
+  `, [limit, offset])
   const total = r.rows.length > 0 ? Number(r.rows[0].total_count) : 0
   return { items: r.rows, total }
 }
@@ -1122,15 +1404,16 @@ export async function revokeLicenseCode(codeId, revokedBy) {
 }
 
 // Mark code as redeemed (called after successful user+tenant creation)
-export async function markLicenseRedeemed({ code, userEmail, tenantSlug }) {
+// userId is optional (for binding to pre-existing user)
+export async function markLicenseRedeemed({ code, userEmail, tenantSlug, userId = null }) {
   const codeHash = hashLicenseCode(code)
   const r = await pool.query(`
     UPDATE license_codes
     SET active = false, redeemed_at = now(),
-        redeemed_by = $2, redeemed_tenant = $3
+        redeemed_by = $2, redeemed_tenant = $3, redeemed_user_id = $4
     WHERE code_hash = $1 AND active = true
     RETURNING id
-  `, [codeHash, userEmail, tenantSlug])
+  `, [codeHash, userEmail, tenantSlug, userId])
   return r.rows[0] || null
 }
 
@@ -1179,6 +1462,501 @@ export async function rotateSecret(newSecret, rotatedBy) {
   } finally {
     client.release()
   }
+}
+
+// ──────────────────────── Access Code Helpers ────────────────────────
+// Kode 6 karakter alfanumerik per tenant untuk pairing tablet (bukan license HMAC).
+// Charset tanpa karakter ambigu: I, O, 0, 1 dibuang.
+const ACCESS_CODE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+// Generate 6 char acak pakai crypto (bukan Math.random) — selalu UPPERCASE.
+export function randomAccessCode() {
+  const chars = []
+  for (let i = 0; i < 6; i++) {
+    chars.push(ACCESS_CODE_CHARSET[crypto.randomInt(0, ACCESS_CODE_CHARSET.length)])
+  }
+  return chars.join('')
+}
+
+// Normalisasi input kode: buang whitespace + uppercase. Kode disimpan UPPERCASE,
+// jadi lookup/compare harus dinormalisasi dulu.
+export function normalizeAccessCode(code) {
+  return String(code ?? '').replace(/\s+/g, '').toUpperCase()
+}
+
+export async function generateAccessCode(tenantSlug, { expiry = null } = {}) {
+  // Generate unique 6-char code; retry kalau tabrakan.
+  let code = ''
+  for (let attempt = 0; attempt < 20; attempt++) {
+    code = randomAccessCode()
+    const dup = await pool.query('SELECT 1 FROM access_codes WHERE code = $1', [code])
+    if (!dup.rows.length) break
+  }
+  const expiresAt = expiry || new Date(Date.now() + 7 * 24 * 3600 * 1000) // default 7 days
+  const r = await pool.query(
+    `INSERT INTO access_codes (tenant_slug, code, expires_at) VALUES ($1, $2, $3)
+     ON CONFLICT (code) DO NOTHING RETURNING id, tenant_slug, code, expires_at`,
+    [tenantSlug, code, expiresAt]
+  )
+  // Kalau tabrakan (sangat jarang), coba lagi.
+  if (!r.rows[0]) return generateAccessCode(tenantSlug, { expiry })
+  return r.rows[0]
+}
+
+export async function validateAccessCode(code) {
+  const norm = normalizeAccessCode(code)
+  if (!norm) return null
+  const r = await pool.query(
+    `SELECT ac.id, ac.tenant_slug, ac.code, ac.active, ac.expires_at, ac.used_at, ac.used_by_fp,
+            t.name, t.status, t.trial_ends_at, t.subscription_ends_at, t.grace_period_ends_at, t.active AS tenant_active
+     FROM access_codes ac
+     JOIN tenants t ON t.slug = ac.tenant_slug
+     WHERE ac.code = $1`,
+    [norm]
+  )
+  if (!r.rows[0]) return null
+  const row = r.rows[0]
+  // Single-use: kode sudah pernah dipakai → tolak (kode lama active=false + used_at terisi).
+  if (row.used_at) return { ...row, used: true, error: 'Kode sudah digunakan' }
+  if (row.active === false) return { ...row, error: 'Kode akses tidak valid' }
+  // Check expiry
+  if (row.expires_at && new Date(row.expires_at) < new Date()) return { ...row, error: 'Kode akses sudah kedaluwarsa' }
+  // Check tenant status
+  if (row.tenant_active === false) return { ...row, error: 'Tenant tidak aktif' }
+  // Status efektif dihitung dari timestamp (trial/active yang lewat tenggat → expired/suspended).
+  const eff = await getEffectiveTenantStatus(row.tenant_slug)
+  // Tenant hasil registrasi yang belum di-approve (pending) / ditolak → booth diblokir.
+  if (eff === 'pending') return { ...row, error: 'Pendaftaran masih menunggu persetujuan admin' }
+  if (eff === 'rejected') return { ...row, error: 'Pendaftaran ditolak' }
+  if (eff === 'suspended') return { ...row, error: 'Tenant diblokir' }
+  if (eff === 'expired') return { ...row, error: 'Langganan berakhir, silakan perpanjang' }
+  return { ...row, status: eff || row.status }
+}
+
+// Tandai kode sebagai terpakai (single-use): used_at + active=false. deviceFp opsional.
+export async function markAccessCodeUsed(id, { deviceFp = null } = {}) {
+  await pool.query(
+    `UPDATE access_codes SET used_at = now(), active = false,
+            used_by_fp = COALESCE($2, used_by_fp)
+     WHERE id = $1`,
+    [id, deviceFp]
+  )
+}
+
+export async function listActiveAccessCodes(tenantSlug) {
+  const r = await pool.query(
+    `SELECT id, tenant_slug, code, expires_at, used_at, used_by_fp, created_at
+     FROM access_codes WHERE tenant_slug = $1 AND active = true ORDER BY created_at DESC`,
+    [tenantSlug]
+  )
+  return r.rows
+}
+
+export async function deactivateAccessCode(id) {
+  await pool.query('UPDATE access_codes SET active = false WHERE id = $1', [id])
+}
+
+// ──────────────────────── Booth Device Helpers ────────────────────────
+// Device tablet yang sudah di-pair ke tenant (hasil dari kode akses single-use).
+
+export async function upsertBoothDevice({ tenantSlug, deviceFp, ip = null, name = null }) {
+  if (!tenantSlug || !deviceFp) return null
+  const r = await pool.query(
+    `INSERT INTO booth_devices (tenant_slug, device_fp, device_name, last_seen_at, last_ip, is_active)
+     VALUES ($1, $2, $3, now(), $4, true)
+     ON CONFLICT (tenant_slug, device_fp)
+     DO UPDATE SET is_active = true, last_seen_at = now(), last_ip = EXCLUDED.last_ip,
+                   device_name = COALESCE(EXCLUDED.device_name, booth_devices.device_name)
+     RETURNING id, tenant_slug, device_fp, device_name, last_seen_at, last_ip, is_active, paired_at`,
+    [tenantSlug, deviceFp, name, ip]
+  )
+  return r.rows[0] || null
+}
+
+export async function listBoothDevices(tenantSlug) {
+  const r = await pool.query(
+    `SELECT id, device_fp, device_name, last_seen_at, last_ip, is_active, paired_at
+     FROM booth_devices WHERE tenant_slug = $1 ORDER BY paired_at DESC, id DESC`,
+    [tenantSlug]
+  )
+  return r.rows
+}
+
+export async function deactivateBoothDevice(tenantSlug, id) {
+  await pool.query(
+    'UPDATE booth_devices SET is_active = false WHERE tenant_slug = $1 AND id = $2',
+    [tenantSlug, id]
+  )
+}
+
+export async function getBoothDevice(tenantSlug, deviceFp) {
+  if (!tenantSlug || !deviceFp) return null
+  const r = await pool.query(
+    `SELECT id, tenant_slug, device_fp, device_name, last_seen_at, last_ip, is_active, paired_at
+     FROM booth_devices WHERE tenant_slug = $1 AND device_fp = $2`,
+    [tenantSlug, deviceFp]
+  )
+  return r.rows[0] || null
+}
+
+// Update last_seen saja; no-op kalau row belum ada (belum di-pair).
+export async function touchBoothDevice(tenantSlug, deviceFp) {
+  if (!tenantSlug || !deviceFp) return
+  await pool.query(
+    'UPDATE booth_devices SET last_seen_at = now() WHERE tenant_slug = $1 AND device_fp = $2',
+    [tenantSlug, deviceFp]
+  )
+}
+
+// ──────────────────────── Tenant Subscription Helpers ────────────────────────
+// Status machine: pending → trial → active → expired → suspended (rejected = mati)
+// Trial: TRIAL_DAYS (default 3). Grace after expired: GRACE_DAYS (default 3).
+
+export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS || 3)
+export const GRACE_DAYS = Number(process.env.GRACE_DAYS || 3)
+
+// Mark a tenant as on trial: set status='trial' + active=true + trial_ends_at = now + TRIAL_DAYS
+export async function startTenantTrial(tenantSlug) {
+  const trialEnds = new Date(Date.now() + TRIAL_DAYS * 24 * 3600 * 1000)
+  await pool.query(
+    `UPDATE tenants SET active = true, status = 'trial', trial_ends_at = $2, subscription_ends_at = NULL, grace_period_ends_at = NULL, updated_at = now() WHERE slug = $1`,
+    [tenantSlug, trialEnds]
+  )
+  return trialEnds
+}
+
+// Approve pendaftaran vendor: aktifkan tenant + mulai trial dalam SATU transaksi atomik.
+// Idempotent: dipanggil berulang kali menghasilkan state trial yang sama (trial_ends_at di-reset).
+export async function approveTenantRegistration(slug) {
+  const trialEnds = new Date(Date.now() + TRIAL_DAYS * 24 * 3600 * 1000)
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const { rows } = await client.query(
+      `UPDATE tenants
+       SET active = true, status = 'trial', trial_ends_at = $2,
+           subscription_ends_at = NULL, grace_period_ends_at = NULL, updated_at = now()
+       WHERE slug = $1
+       RETURNING slug, name, status, active, trial_ends_at`,
+      [slug, trialEnds]
+    )
+    await client.query('COMMIT')
+    return rows[0] || null
+  } catch (e) {
+    await client.query('ROLLBACK')
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+// Activate subscription: status='active', subscription_ends_at = now + days
+export async function activateTenantSubscription(tenantSlug, days = 30) {
+  const endsAt = new Date(Date.now() + days * 24 * 3600 * 1000)
+  await pool.query(
+    `UPDATE tenants SET status = 'active', subscription_ends_at = $2, grace_period_ends_at = NULL, updated_at = now() WHERE slug = $1`,
+    [tenantSlug, endsAt]
+  )
+  return endsAt
+}
+
+// Extend trial (super_admin action): reset trial_ends_at = now + days
+export async function extendTenantTrial(tenantSlug, days = TRIAL_DAYS) {
+  const endsAt = new Date(Date.now() + days * 24 * 3600 * 1000)
+  await pool.query(
+    `UPDATE tenants SET status = 'trial', trial_ends_at = $2, updated_at = now() WHERE slug = $1`,
+    [tenantSlug, endsAt]
+  )
+  return endsAt
+}
+
+// Force suspend (super_admin action)
+export async function suspendTenant(tenantSlug) {
+  await pool.query(`UPDATE tenants SET status = 'suspended', updated_at = now() WHERE slug = $1`, [tenantSlug])
+}
+
+// Reactivate tenant (super_admin action): set to active with fresh subscription_ends_at
+export async function reactivateTenant(tenantSlug, days = 30) {
+  const endsAt = new Date(Date.now() + days * 24 * 3600 * 1000)
+  await pool.query(
+    `UPDATE tenants SET status = 'active', subscription_ends_at = $2, grace_period_ends_at = NULL, updated_at = now() WHERE slug = $1`,
+    [tenantSlug, endsAt]
+  )
+  return endsAt
+}
+
+export async function getTenantSubscription(slug) {
+  const r = await pool.query(
+    `SELECT slug, status, trial_ends_at, subscription_ends_at, grace_period_ends_at, created_at
+     FROM tenants WHERE slug = $1`,
+    [slug]
+  )
+  return r.rows[0] || null
+}
+
+// Status efektif tenant — hitung dari timestamps tanpa nunggu cron hourly.
+// trial/active yang lewat tenggat → 'expired'. Lewat masa grace → 'suspended'.
+// Status lain (mis. 'suspended' manual / 'expired') dikembalikan apa adanya.
+export async function getEffectiveTenantStatus(slug) {
+  const sub = await getTenantSubscription(slug)
+  if (!sub) return null
+  const now = Date.now()
+  const ts = (v) => (v ? new Date(v).getTime() : null)
+  const graceEnd = ts(sub.grace_period_ends_at)
+  if (graceEnd && graceEnd < now && ['trial', 'active', 'expired'].includes(sub.status)) {
+    return 'suspended'
+  }
+  if (sub.status === 'trial' && ts(sub.trial_ends_at) && ts(sub.trial_ends_at) < now) return 'expired'
+  if (sub.status === 'active' && ts(sub.subscription_ends_at) && ts(sub.subscription_ends_at) < now) return 'expired'
+  return sub.status
+}
+
+// Scheduled job: run periodically to transition expired tenants
+export async function runSubscriptionCheck() {
+  const now = new Date()
+  let updated = 0
+  // 1. trial → expired (trial_ends_at passed)
+  const trialExp = await pool.query(
+    `UPDATE tenants SET status='expired', grace_period_ends_at = now() + ($2 || ' days')::interval
+     WHERE status='trial' AND trial_ends_at < $1 AND trial_ends_at IS NOT NULL
+     RETURNING slug`,
+    [now, GRACE_DAYS]
+  )
+  updated += trialExp.rowCount || 0
+  // 2. active → expired (subscription_ends_at passed)
+  const activeExp = await pool.query(
+    `UPDATE tenants SET status='expired', grace_period_ends_at = now() + ($2 || ' days')::interval
+     WHERE status='active' AND subscription_ends_at < $1 AND subscription_ends_at IS NOT NULL
+     RETURNING slug`,
+    [now, GRACE_DAYS]
+  )
+  updated += activeExp.rowCount || 0
+  // 3. expired → suspended (grace_period_ends_at passed)
+  const graceExp = await pool.query(
+    `UPDATE tenants SET status='suspended'
+     WHERE status='expired' AND grace_period_ends_at IS NOT NULL AND grace_period_ends_at < $1
+     RETURNING slug`,
+    [now]
+  )
+  updated += graceExp.rowCount || 0
+  return { updated }
+}
+
+// ──────────────────────── Subscription Payments (Midtrans) ──────────────────
+
+export async function createSubscriptionPayment({ tenantSlug, orderId, amount, snapToken = null }) {
+  const r = await pool.query(
+    `INSERT INTO subscription_payments (tenant_slug, order_id, amount, status, snap_token)
+     VALUES ($1, $2, $3, 'pending', $4)
+     RETURNING id, tenant_slug, order_id, amount, status, snap_token, created_at`,
+    [tenantSlug, orderId, amount, snapToken]
+  )
+  return r.rows[0] || null
+}
+
+export async function setSubscriptionPaymentSnapToken(orderId, snapToken) {
+  await pool.query('UPDATE subscription_payments SET snap_token = $2 WHERE order_id = $1', [orderId, snapToken])
+}
+
+export async function getSubscriptionPayment(orderId) {
+  const r = await pool.query(
+    `SELECT id, tenant_slug, order_id, amount, status, snap_token, created_at, paid_at
+     FROM subscription_payments WHERE order_id = $1`,
+    [orderId]
+  )
+  return r.rows[0] || null
+}
+
+// Idempotent: hanya transisi pending/failed → paid. Return null kalau sudah paid.
+export async function markSubscriptionPaymentPaid(orderId) {
+  const r = await pool.query(
+    `UPDATE subscription_payments SET status = 'paid', paid_at = now()
+     WHERE order_id = $1 AND status <> 'paid'
+     RETURNING tenant_slug, amount`,
+    [orderId]
+  )
+  return r.rows[0] || null
+}
+
+export async function markSubscriptionPaymentFailed(orderId) {
+  const r = await pool.query(
+    `UPDATE subscription_payments SET status = 'failed'
+     WHERE order_id = $1 AND status = 'pending'
+     RETURNING id`,
+    [orderId]
+  )
+  return r.rows[0] || null
+}
+
+// ──────────────────────── Notifikasi (Email + WhatsApp) ─────────────────────
+
+const PB_APP_URL = process.env.PB_APP_URL || 'https://app.achipix.web.id'
+const NOTIFY_WINDOW_DAYS = 3
+
+// Kontak owner tenant: prioritas owner_user_id, fallback user dengan tenant_id sama.
+export async function getTenantOwnerContact(tenantSlug) {
+  const r = await pool.query(
+    `SELECT COALESCE(o.email, u.email) AS email,
+            COALESCE(o.phone, u.phone) AS phone,
+            COALESCE(o.name, u.name) AS name,
+            t.name AS tenant_name
+     FROM tenants t
+     LEFT JOIN admin_user o ON o.id = t.owner_user_id
+     LEFT JOIN LATERAL (
+       SELECT email, phone, name FROM admin_user
+       WHERE tenant_id = t.slug ORDER BY id ASC LIMIT 1
+     ) u ON true
+     WHERE t.slug = $1`,
+    [tenantSlug]
+  )
+  return r.rows[0] || null
+}
+
+function fmtDateID(d) {
+  if (!d) return '-'
+  try {
+    return new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+  } catch {
+    return '-'
+  }
+}
+
+function buildNotificationMessage(kind, { tenantName, trialEndsAt, daysLeft }) {
+  const dash = `${PB_APP_URL}/#/`
+  if (kind === 'trial_reminder') {
+    return `Halo ${tenantName || 'Kak'}! 👋\n\nMasa trial Achipix kamu tinggal ${daysLeft} hari lagi (berakhir ${fmtDateID(trialEndsAt)}).\nYuk perpanjang sekarang biar booth-nya nggak mati mendadak: ${dash}\n\nKalau butuh bantuan, balas pesan ini ya.`
+  }
+  return `Halo ${tenantName || 'Kak'}, masa langganan Achipix kamu sudah berakhir 😔\n\nTenant ${tenantName || ''} sekarang nggak bisa dipakai sampai diperpanjang. Aktifkan lagi di dashboard: ${dash}\n\nMakasih sudah pakai Achipix!`
+}
+
+// Best-effort email via nodemailer (dynamic import agar server tetap jalan
+// meski dependency belum ter-install / SMTP belum diisi).
+async function sendEmailNotification({ to, subject, text }) {
+  const host = process.env.SMTP_HOST
+  const port = process.env.SMTP_PORT
+  const user = process.env.SMTP_USER
+  const pass = process.env.SMTP_PASS
+  const from = process.env.SMTP_FROM || user
+  if (!host || !port || !user || !pass || !from) {
+    console.log('[notify] SMTP belum dikonfigurasi — email dilewati')
+    return { ok: false, skipped: true }
+  }
+  try {
+    const nodemailer = await import('nodemailer')
+    const transport = nodemailer.default.createTransport({
+      host,
+      port: Number(port),
+      secure: Number(port) === 465,
+      auth: { user, pass },
+    })
+    await transport.sendMail({ from, to, subject, text })
+    return { ok: true }
+  } catch (e) {
+    console.error('[notify] email gagal:', e.message)
+    return { ok: false, error: e.message }
+  }
+}
+
+// Best-effort WhatsApp via Fonnte-compatible HTTP API.
+async function sendWhatsAppNotification({ phone, message }) {
+  const url = process.env.WA_API_URL || 'https://api.fonnte.com/send'
+  const token = process.env.WA_TOKEN
+  if (!token) {
+    console.log('[notify] WA belum dikonfigurasi — whatsapp dilewati')
+    return { ok: false, skipped: true }
+  }
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: token } : {}) },
+      body: JSON.stringify({ target: phone, message }),
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    return { ok: true }
+  } catch (e) {
+    console.error('[notify] WA gagal:', e.message)
+    return { ok: false, error: e.message }
+  }
+}
+
+// Kirim 1 notifikasi per (tenant, kind, channel) dengan dedupe UNIQUE.
+// INSERT dulu; kalau konflik → sudah pernah dikirim, skip. Gagal kirim → status 'failed'.
+async function deliverNotification({ tenantSlug, kind, channel, contact, subject, text }) {
+  const ins = await pool.query(
+    `INSERT INTO notifications (tenant_slug, kind, channel, status, sent_at)
+     VALUES ($1, $2, $3, 'sent', now())
+     ON CONFLICT (tenant_slug, kind, channel) DO NOTHING
+     RETURNING id`,
+    [tenantSlug, kind, channel]
+  )
+  if (!ins.rows[0]) return { skipped: true }
+
+  let result
+  if (channel === 'email') {
+    if (!contact?.email) result = { ok: false, skipped: true }
+    else result = await sendEmailNotification({ to: contact.email, subject, text })
+  } else {
+    if (!contact?.phone) result = { ok: false, skipped: true }
+    else result = await sendWhatsAppNotification({ phone: contact.phone, message: text })
+  }
+  if (!result.ok) {
+    await pool.query(`UPDATE notifications SET status = 'failed' WHERE id = $1`, [ins.rows[0].id])
+    return { failed: true }
+  }
+  return { sent: true }
+}
+
+// Cron: reminder trial H-3 + notice saat tenant baru expired.
+// Dipanggil dari serve.mjs SETELAH runSubscriptionCheck().
+export async function runNotifications() {
+  const out = { sent: 0, failed: 0, skipped: 0 }
+  let trialRows = []
+  let expiredRows = []
+  try {
+    trialRows = (await pool.query(
+      `SELECT slug, name, trial_ends_at FROM tenants
+       WHERE status = 'trial' AND trial_ends_at IS NOT NULL
+         AND trial_ends_at > now() AND trial_ends_at <= now() + ($1 || ' days')::interval`,
+      [NOTIFY_WINDOW_DAYS]
+    )).rows
+  } catch (e) {
+    console.error('[notify] query trial error:', e.message)
+  }
+  try {
+    // Status 'expired' di-set oleh runSubscriptionCheck saat trial/langganan lewat.
+    expiredRows = (await pool.query(
+      `SELECT slug, name, subscription_ends_at, trial_ends_at FROM tenants WHERE status = 'expired'`
+    )).rows
+  } catch (e) {
+    console.error('[notify] query expired error:', e.message)
+  }
+
+  for (const t of trialRows) {
+    const contact = await getTenantOwnerContact(t.slug)
+    const daysLeft = Math.max(0, Math.ceil((new Date(t.trial_ends_at).getTime() - Date.now()) / 86400000))
+    const text = buildNotificationMessage('trial_reminder', { tenantName: t.name, trialEndsAt: t.trial_ends_at, daysLeft })
+    const subject = `Trial Achipix tinggal ${daysLeft} hari lagi`
+    for (const channel of ['email', 'whatsapp']) {
+      const r = await deliverNotification({ tenantSlug: t.slug, kind: 'trial_reminder', channel, contact, subject, text })
+      if (r.sent) out.sent++
+      else if (r.failed) out.failed++
+      else out.skipped++
+    }
+  }
+
+  for (const t of expiredRows) {
+    const contact = await getTenantOwnerContact(t.slug)
+    const endAt = t.subscription_ends_at || t.trial_ends_at
+    const text = buildNotificationMessage('expired_notice', { tenantName: t.name, trialEndsAt: endAt })
+    const subject = 'Langganan Achipix berakhir — aktifkan lagi yuk'
+    for (const channel of ['email', 'whatsapp']) {
+      const r = await deliverNotification({ tenantSlug: t.slug, kind: 'expired_notice', channel, contact, subject, text })
+      if (r.sent) out.sent++
+      else if (r.failed) out.failed++
+      else out.skipped++
+    }
+  }
+  return out
 }
 
 export default pool

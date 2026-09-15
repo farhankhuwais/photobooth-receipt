@@ -5,6 +5,7 @@ import ProtectedRoute from '@/components/ProtectedRoute'
 import RoleRoute from '@/components/RoleRoute'
 import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
+import RegisterPage from '@/pages/RegisterPage'
 import Dashboard from '@/pages/Dashboard'
 import Tenants from '@/pages/Tenants'
 import Users from '@/pages/Users'
@@ -16,11 +17,10 @@ import AuditLog from '@/pages/AuditLog'
 import Billing from '@/pages/Billing'
 import LicenseCodes from '@/pages/LicenseCodes'
 import Settings from '@/pages/Settings'
-import Manage from '@/pages/Manage'
 
 const SUPER = ['super_admin']
 const TENANT = ['super_admin', 'tenant_admin']
-const ANY = ['super_admin', 'tenant_admin', 'tenant_user']
+const ANY = ['super_admin', 'tenant_admin']
 
 const theme = createTheme({
   palette: {
@@ -38,6 +38,7 @@ export default function App() {
         <HashRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<RegisterPage />} />
             <Route
               path="/"
               element={
@@ -46,7 +47,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             >
-              <Route index element={<RoleRoute roles={SUPER}><Dashboard /></RoleRoute>} />
+              <Route index element={<RoleRoute roles={ANY}><Dashboard /></RoleRoute>} />
               <Route path="tenants" element={<RoleRoute roles={SUPER}><Tenants /></RoleRoute>} />
               <Route path="users" element={<RoleRoute roles={SUPER}><Users /></RoleRoute>} />
               <Route path="photos" element={<RoleRoute roles={TENANT}><Photos /></RoleRoute>} />
@@ -57,7 +58,6 @@ export default function App() {
               <Route path="tiers" element={<RoleRoute roles={SUPER}><PricingTiers /></RoleRoute>} />
               <Route path="license" element={<RoleRoute roles={SUPER}><LicenseCodes /></RoleRoute>} />
               <Route path="settings" element={<RoleRoute roles={TENANT}><Settings /></RoleRoute>} />
-              <Route path="manage" element={<RoleRoute roles={ANY}><Manage /></RoleRoute>} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

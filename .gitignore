@@ -14,3 +14,6 @@ dev.err
 *.tsbuildinfo
 
 admin/cookies.txt
+
+# knowledge graph output
+graphify-out/

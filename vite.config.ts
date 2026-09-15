@@ -46,7 +46,20 @@ export default defineConfig({
       }
     })
   ],
-  server: { host: true, port: 5173 },
+  server: {
+    host: true,
+    port: 5173,
+    // true = izinkan akses dev dari hostname apapun (termasuk quick tunnel trycloudflare).
+    // Dev-box saja — jangan pernah aktif untuk rilis production.
+    allowedHosts: true,
+    // Dev: proxy ke backend di container (host port 8099) supaya `npm run dev`
+    // tidak perlu rebuild image. Tidak dipakai saat production build.
+    proxy: {
+      '/api': { target: 'http://localhost:8099', changeOrigin: true },
+      '/portal': { target: 'http://localhost:8099', changeOrigin: true },
+      '/u': { target: 'http://localhost:8099', changeOrigin: true },
+    },
+  },
   preview: {
     host: true,
     port: 5173,

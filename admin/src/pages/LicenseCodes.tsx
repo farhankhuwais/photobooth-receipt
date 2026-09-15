@@ -1,5 +1,7 @@
 // admin/src/pages/LicenseCodes.tsx
-// Generate + manage HMAC-signed license codes for vendors
+// Kode Aktivasi — generate + kelola kode aktivasi 6 digit untuk vendor.
+// Satu-satunya jalur aktivasi: admin generate di sini → kirim kode → vendor
+// masukkan di Dashboard. HMAC legacy sudah tidak digenerate dari halaman ini.
 // super_admin only
 
 import { useState, useEffect } from 'react'
@@ -15,20 +17,38 @@ import VpnKey from '@mui/icons-material/VpnKey'
 import Block from '@mui/icons-material/Block'
 import CheckCircle from '@mui/icons-material/CheckCircle'
 import HourglassEmpty from '@mui/icons-material/HourglassEmpty'
-import { licenseApi, licenseSecretApi, type LicenseCode } from '@/api/client'
+import EventBusy from '@mui/icons-material/EventBusy'
+import { licenseApi, userApi } from '@/api/client'
+import type { LicenseCode } from '@/types'
+
+interface GeneratedCode {
+  code: string
+  expiresAt: string | null
+  email: string
+}
+
+function isExpired(c: LicenseCode): boolean {
+  return new Date(c.expires_at) < new Date()
+}
+
+// Kode 6 digit: secret_version NULL & code_plain 6 digit. Sisanya = legacy HMAC.
+function isLegacy(c: LicenseCode): boolean {
+  return c.secret_version != null || !c.code_plain || !/^\d{6}$/.test(c.code_plain)
+}
 
 export default function LicenseCodes() {
-  const [vendorId, setVendorId] = useState('')
-  const [expiryDays, setExpiryDays] = useState(30)
-  const [tierSlug, setTierSlug] = useState('')
-  const [generatedCode, setGeneratedCode] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [expiryDays, setExpiryDays] = useState(7)
+  const [generating, setGenerating] = useState(false)
+  const [generated, setGenerated] = useState<GeneratedCode | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [listLoading, setListLoading] = useState(false)
   const [snack, setSnack] = useState<{ msg: string; severity: 'success' | 'error' | 'info' } | null>(null)
   const [codes, setCodes] = useState<LicenseCode[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)        // 0-based, TablePagination convention
   const [rowsPerPage, setRowsPerPage] = useState(20)
+  const [users, setUsers] = useState<{ id: number; email: string; name: string }[]>([])
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
 
   const loadList = async () => {
     setListLoading(true)
@@ -48,76 +68,45 @@ export default function LicenseCodes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, rowsPerPage])
 
+  // Load users untuk dropdown tujuan kode
+  useEffect(() => {
+    userApi.list({ page: 1, pageSize: 500 })
+      .then(res => setUsers(res.items.map(u => ({ id: u.id, email: u.email, name: u.name || u.email }))))
+      .catch(e => setSnack({ msg: (e as Error).message, severity: 'error' }))
+  }, [])
+
   const handleGenerate = async () => {
-    if (!vendorId.trim()) {
-      setSnack({ msg: 'Vendor ID wajib diisi', severity: 'error' })
+    if (!selectedUserId) {
+      setSnack({ msg: 'User wajib dipilih', severity: 'error' })
       return
     }
-    setLoading(true)
+    setGenerating(true)
     try {
-      const res = await licenseApi.generate(vendorId.trim(), expiryDays, tierSlug || undefined)
-      setGeneratedCode(res.code)
-      setSnack({ msg: 'Kode license berhasil di-generate!', severity: 'success' })
-      setVendorId('')
-      setPage(0)            // jump back to first page so user sees new code
+      const res = await licenseApi.generate(selectedUserId, expiryDays)
+      const user = users.find(u => u.id === selectedUserId)
+      setGenerated({ code: res.code, expiresAt: res.expires_at ?? null, email: user?.email || '' })
+      setDialogOpen(true)
+      setSnack({ msg: `Kode aktivasi dibuat untuk ${user?.email || 'user'}!`, severity: 'success' })
+      setSelectedUserId(null)
+      setPage(0)            // balik ke halaman pertama supaya kode baru kelihatan
       loadList()
     } catch (e) {
       setSnack({ msg: (e as Error).message || 'Gagal generate kode', severity: 'error' })
     } finally {
-      setLoading(false)
+      setGenerating(false)
     }
   }
 
   const handleRevoke = async (id: number) => {
-    if (!confirm('Yakin revoke kode ini? Kode akan langsung nonaktif dan tidak bisa divalidasi.')) return
+    if (!confirm('Yakin cabut kode ini? Kode akan langsung nonaktif dan tidak bisa dipakai lagi.')) return
     try {
       await licenseApi.revoke(id)
-      setSnack({ msg: 'Kode di-revoke', severity: 'success' })
+      setSnack({ msg: 'Kode dicabut', severity: 'success' })
       loadList()
     } catch (e) {
       setSnack({ msg: (e as Error).message, severity: 'error' })
     }
   }
-
-  // ── Secret version management ────────────────────────────────────────────────
-  const [secrets, setSecrets] = useState<{
-    version: number; created_at: string; is_current: boolean
-    rotated_by_email: string | null; rotated_from: number | null
-  }[]>([])
-  const [secretsLoading, setSecretsLoading] = useState(false)
-  const [showRotate, setShowRotate] = useState(false)
-  const [rotatePassword, setRotatePassword] = useState('')
-  const [rotating, setRotating] = useState(false)
-
-  const loadSecrets = async () => {
-    setSecretsLoading(true)
-    try {
-      const res = await licenseSecretApi.listVersions()
-      setSecrets(res.versions)
-    } catch (e) {
-      setSnack({ msg: (e as Error).message, severity: 'error' })
-    } finally {
-      setSecretsLoading(false)
-    }
-  }
-
-  const handleRotate = async () => {
-    if (!rotatePassword) return
-    setRotating(true)
-    try {
-      const res = await licenseSecretApi.rotate(rotatePassword)
-      setSnack({ msg: res.message, severity: 'success' })
-      setShowRotate(false)
-      setRotatePassword('')
-      loadSecrets()
-    } catch (e) {
-      setSnack({ msg: (e as Error).message, severity: 'error' })
-    } finally {
-      setRotating(false)
-    }
-  }
-
-  useEffect(() => { loadSecrets() }, [])
 
   const copyCode = async (code: string) => {
     await navigator.clipboard.writeText(code)
@@ -125,18 +114,20 @@ export default function LicenseCodes() {
   }
 
   const statusChip = (c: LicenseCode) => {
-    if (c.revoked_at) return <Chip label="Revoked" size="small" color="error" icon={<Block />} />
-    if (c.redeemed_at) return <Chip label="Redeemed" size="small" color="success" icon={<CheckCircle />} />
-    if (new Date(c.expires_at) < new Date()) return <Chip label="Expired" size="small" color="warning" />
-    return <Chip label="Active" size="small" color="primary" icon={<HourglassEmpty />} />
+    if (!c.active && c.revoked_at) return <Chip label="Dicabut" size="small" color="error" icon={<Block />} />
+    if (c.redeemed_at) return <Chip label="Terisi" size="small" color="success" icon={<CheckCircle />} />
+    if (isExpired(c)) return <Chip label="Kadaluarsa" size="small" color="warning" icon={<EventBusy />} />
+    return <Chip label="Aktif" size="small" color="primary" icon={<HourglassEmpty />} />
   }
+
+  const canRevoke = (c: LicenseCode) => c.active && !c.redeemed_at && !c.revoked_at && !isExpired(c)
 
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
         <VpnKey color="primary" />
         <Typography variant="h5" fontWeight={700}>
-          Kode Lisensi
+          Kode Aktivasi
         </Typography>
       </Box>
 
@@ -144,19 +135,25 @@ export default function LicenseCodes() {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" fontWeight={600} mb={2}>Generate Kode Baru</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Kode akses HMAC-signed untuk vendor. Berlaku untuk satu device, satu kali aktivasi.
-          Setelah di-redeem, otomatis terbuat tenant + tenant_admin user.
+          Buat kode aktivasi 6 digit untuk satu user, lalu kirim kodenya ke vendor.
+          Kode berlaku sekali pakai dan otomatis aktif saat dimasukkan di Dashboard.
         </Typography>
 
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'flex-end' }} flexWrap="wrap" useFlexGap>
           <TextField
-            label="Vendor ID"
-            placeholder="Contoh: vendor-budi, paket-wedding-2026"
-            value={vendorId}
-            onChange={(e) => setVendorId(e.target.value)}
+            select
+            label="User"
+            value={selectedUserId ?? ''}
+            onChange={(e) => setSelectedUserId(e.target.value ? Number(e.target.value) : null)}
             size="small"
             sx={{ minWidth: 260 }}
-          />
+            disabled={users.length === 0}
+            helperText={users.length === 0 ? 'Memuat daftar user...' : 'User yang akan memakai kode ini'}
+          >
+            {users.map((u) => (
+              <MenuItem key={u.id} value={u.id}>{u.name || u.email}</MenuItem>
+            ))}
+          </TextField>
           <TextField
             select
             label="Durasi"
@@ -164,61 +161,26 @@ export default function LicenseCodes() {
             onChange={(e) => setExpiryDays(Number(e.target.value))}
             size="small"
             sx={{ minWidth: 160 }}
+            helperText="Masa aktif setelah diaktifkan"
           >
+            <MenuItem value={1}>1 hari</MenuItem>
+            <MenuItem value={3}>3 hari</MenuItem>
             <MenuItem value={7}>7 hari</MenuItem>
             <MenuItem value={14}>14 hari</MenuItem>
             <MenuItem value={30}>30 hari</MenuItem>
-            <MenuItem value={60}>60 hari</MenuItem>
-            <MenuItem value={90}>90 hari</MenuItem>
-            <MenuItem value={180}>180 hari</MenuItem>
-            <MenuItem value={365}>365 hari</MenuItem>
           </TextField>
-          <TextField
-            label="Tier (opsional)"
-            placeholder="basic / premium / profesional"
-            value={tierSlug}
-            onChange={(e) => setTierSlug(e.target.value)}
-            size="small"
-            sx={{ minWidth: 200 }}
-            helperText="Slug tier yang akan di-assign saat redeem"
-          />
           <Button
             variant="contained"
             onClick={handleGenerate}
-            disabled={loading || !vendorId.trim()}
-            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <VpnKey />}
+            disabled={generating || !selectedUserId}
+            startIcon={generating ? <CircularProgress size={16} color="inherit" /> : <VpnKey />}
           >
-            {loading ? 'Generate...' : 'Generate Kode'}
+            {generating ? 'Generate...' : 'Generate Kode'}
           </Button>
         </Stack>
-
-        {generatedCode && (
-          <Box sx={{ mt: 3 }}>
-            <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
-              Kode License (salin dan kirim ke vendor):
-            </Typography>
-            <Box sx={{
-              display: 'flex', gap: 1, alignItems: 'center',
-              bgcolor: 'grey.100', borderRadius: 1, p: 1.5,
-              border: '1px solid', borderColor: 'divider',
-            }}>
-              <Typography
-                component="code"
-                sx={{ fontFamily: 'monospace', fontSize: '0.75rem', flex: 1, wordBreak: 'break-all' }}
-              >
-                {generatedCode}
-              </Typography>
-              <Tooltip title="Salin">
-                <Button size="small" variant="outlined" onClick={() => copyCode(generatedCode)}>
-                  <ContentCopy fontSize="small" />
-                </Button>
-              </Tooltip>
-            </Box>
-          </Box>
-        )}
       </Paper>
 
-      {/* List of issued codes */}
+      {/* List kode aktivasi */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6" fontWeight={600}>Kode yang Sudah Diterbitkan</Typography>
@@ -239,83 +201,150 @@ export default function LicenseCodes() {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Vendor</TableCell>
-                    <TableCell>Tier</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Diterbitkan</TableCell>
-                    <TableCell>Expired</TableCell>
-                    <TableCell>Redeemed by</TableCell>
+                    <TableCell>Kode</TableCell>
+                    <TableCell>User Tujuan</TableCell>
                     <TableCell>Tenant</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Dibuat</TableCell>
+                    <TableCell>Kedaluarsa</TableCell>
+                    <TableCell>Redeem</TableCell>
                     <TableCell align="right">Aksi</TableCell>
                   </TableRow>
                 </TableHead>
-              <TableBody>
-                {codes.map((c) => (
-                  <TableRow key={c.id} hover>
-                    <TableCell sx={{ fontWeight: 500 }}>{c.vendor_id}</TableCell>
-                    <TableCell>{c.tier_slug || <Typography variant="caption" color="text.disabled">—</Typography>}</TableCell>
-                    <TableCell>{statusChip(c)}</TableCell>
-                    <TableCell>
-                      <Typography variant="caption" color="text.secondary">
-                        {new Date(c.issued_at).toLocaleDateString('id-ID')}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption" color={new Date(c.expires_at) < new Date() ? 'error' : 'text.secondary'}>
-                        {new Date(c.expires_at).toLocaleDateString('id-ID')}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {c.redeemed_by ? (
-                        <Typography variant="caption">{c.redeemed_by}</Typography>
-                      ) : (
-                        <Typography variant="caption" color="text.disabled">—</Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {c.redeemed_tenant ? (
-                        <Chip
-                          label={c.redeemed_tenant}
-                          size="small"
-                          variant="outlined"
-                          onClick={() => window.open(`https://${c.redeemed_tenant}.achipix.web.id`, '_blank')}
-                          sx={{ cursor: 'pointer' }}
-                        />
-                      ) : (
-                        <Typography variant="caption" color="text.disabled">—</Typography>
-                      )}
-                    </TableCell>
-                    <TableCell align="right">
-                      {c.active && !c.redeemed_at && (
-                        <Tooltip title="Revoke (nonaktifkan)">
-                          <IconButton size="small" color="error" onClick={() => handleRevoke(c.id)}>
-                            <Block fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-          <TablePagination
-            component="div"
-            count={total}
-            page={page}
-            onPageChange={(_e, p) => setPage(p)}
-            rowsPerPage={rowsPerPage}
-            onRowsPerPageChange={(e) => {
-              setRowsPerPage(parseInt(e.target.value, 10))
-              setPage(0)
-            }}
-            rowsPerPageOptions={[10, 20, 50, 100]}
-            labelRowsPerPage="Per halaman:"
-            labelDisplayedRows={({ from, to, count }) => `${from}–${to} dari ${count}`}
-          />
+                <TableBody>
+                  {codes.map((c) => (
+                    <TableRow key={c.id} hover>
+                      <TableCell sx={{ maxWidth: 160 }}>
+                        {isLegacy(c) ? (
+                          <Tooltip title="Kode HMAC legacy — tidak dipakai lagi">
+                            <Typography variant="caption" color="text.disabled">—(legacy)</Typography>
+                          </Tooltip>
+                        ) : (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.8rem', letterSpacing: '0.08em' }}>
+                              {c.code_plain}
+                            </Typography>
+                            <Tooltip title="Salin kode">
+                              <IconButton size="small" onClick={() => copyCode(c.code_plain!)}>
+                                <ContentCopy fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 500 }}>
+                        {c.for_user_email || c.vendor_id || c.redeemed_user_email || (
+                          <Typography variant="caption" color="text.disabled">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {c.redeemed_tenant ? (
+                          <Chip
+                            label={c.redeemed_tenant}
+                            size="small"
+                            variant="outlined"
+                            onClick={() => window.open(`https://${c.redeemed_tenant}.achipix.web.id`, '_blank')}
+                            sx={{ cursor: 'pointer' }}
+                          />
+                        ) : (
+                          <Typography variant="caption" color="text.disabled">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>{statusChip(c)}</TableCell>
+                      <TableCell>
+                        <Typography variant="caption" color="text.secondary">
+                          {new Date(c.created_at || c.issued_at).toLocaleDateString('id-ID')}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="caption" color={isExpired(c) ? 'error' : 'text.secondary'}>
+                          {new Date(c.expires_at).toLocaleDateString('id-ID')}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {c.redeemed_at ? (
+                          <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                            <Typography variant="caption">
+                              {new Date(c.redeemed_at).toLocaleDateString('id-ID')}
+                            </Typography>
+                            {(c.redeemed_by_email || c.redeemed_by) && (
+                              <Typography variant="caption" color="text.secondary">
+                                {c.redeemed_by_email || c.redeemed_by}
+                              </Typography>
+                            )}
+                          </Box>
+                        ) : (
+                          <Typography variant="caption" color="text.disabled">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        {canRevoke(c) && (
+                          <Tooltip title="Cabut kode">
+                            <IconButton size="small" color="error" onClick={() => handleRevoke(c.id)}>
+                              <Block fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            <TablePagination
+              component="div"
+              count={total}
+              page={page}
+              onPageChange={(_e, p) => setPage(p)}
+              rowsPerPage={rowsPerPage}
+              onRowsPerPageChange={(e) => {
+                setRowsPerPage(parseInt(e.target.value, 10))
+                setPage(0)
+              }}
+              rowsPerPageOptions={[10, 20, 50, 100]}
+              labelRowsPerPage="Per halaman:"
+              labelDisplayedRows={({ from, to, count }) => `${from}–${to} dari ${count}`}
+            />
           </>
         )}
       </Paper>
+
+      {/* Dialog hasil generate kode 6 digit */}
+      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Kode Aktivasi</DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Salin dan kirim kode ini ke vendor{generated?.email ? ` (${generated.email})` : ''}.
+            Kode hanya berlaku untuk satu kali aktivasi.
+          </Alert>
+          <Box sx={{
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            bgcolor: 'grey.100', borderRadius: 1, p: 2.5, border: '1px solid', borderColor: 'divider',
+          }}>
+            <Typography
+              component="code"
+              sx={{ fontFamily: 'monospace', fontSize: '2rem', fontWeight: 700, letterSpacing: '0.35em' }}
+            >
+              {generated?.code}
+            </Typography>
+          </Box>
+          {generated?.expiresAt && (
+            <Typography variant="caption" color="text.secondary" display="block" textAlign="center" sx={{ mt: 2 }}>
+              Berlaku sampai {new Date(generated.expiresAt).toLocaleDateString('id-ID')}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDialogOpen(false)}>Tutup</Button>
+          <Button
+            variant="contained"
+            startIcon={<ContentCopy />}
+            onClick={() => generated && copyCode(generated.code)}
+          >
+            Salin Kode
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={!!snack}
@@ -327,125 +356,6 @@ export default function LicenseCodes() {
           {snack?.msg}
         </Alert>
       </Snackbar>
-
-      {/* ── Secret management ─────────────────────────────────────────────────── */}
-      <Paper sx={{ p: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="h6" fontWeight={600}>Manajemen Secret</Typography>
-            <Typography variant="caption" color="text.secondary">(versioned — kode lama tetap valid)</Typography>
-          </Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="warning"
-            onClick={loadSecrets}
-            disabled={secretsLoading}
-          >
-            {secretsLoading ? 'Loading...' : 'Refresh'}
-          </Button>
-        </Box>
-
-        {/* Secret versions list */}
-        {secretsLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-            <CircularProgress size={20} />
-          </Box>
-        ) : secrets.length === 0 ? (
-          <Alert severity="info">Belum ada data secret.</Alert>
-        ) : (
-          <TableContainer>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>Versi</TableCell>
-                  <TableCell>Dibuat</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell>Di-rotasi oleh</TableCell>
-                  <TableCell>Rotated from</TableCell>
-                  <TableCell align="right">Aksi</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {secrets.map((s) => (
-                  <TableRow key={s.version} hover>
-                    <TableCell>
-                      <Chip
-                        label={`v${s.version}`}
-                        size="small"
-                        color={s.is_current ? 'success' : 'default'}
-                        variant={s.is_current ? 'filled' : 'outlined'}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption">
-                        {new Date(s.created_at).toLocaleString('id-ID')}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {s.is_current
-                        ? <Chip label="Aktif" size="small" color="success" />
-                        : <Chip label="Non-aktif" size="small" color="default" />}
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption">{s.rotated_by_email || '—'}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="caption">{s.rotated_from ? `v${s.rotated_from}` : 'Initial'}</Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      {s.is_current && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          color="warning"
-                          onClick={() => setShowRotate(true)}
-                        >
-                          Rotate Secret
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-
-        {/* Rotate confirmation dialog */}
-        <Dialog open={showRotate} onClose={() => setShowRotate(false)} maxWidth="xs" fullWidth>
-          <DialogTitle>Rotate License Secret</DialogTitle>
-          <DialogContent>
-            <Alert severity="warning" sx={{ mb: 2 }}>
-              <strong>Peringatan:</strong> Setelah rotasi, semua kode BARU akan di-sign dengan secret baru.
-              Kode LAMA tetap valid karena server menyimpan semua secret version.
-              Frontend bundle (offline validation) tetap pakai secret lama — rebuild dengan
-              <code>VITE_LICENSE_SECRET</code> baru jika ingin update offline validation.
-            </Alert>
-            <TextField
-              fullWidth
-              label="Konfirmasi password Anda"
-              type="password"
-              value={rotatePassword}
-              onChange={(e) => setRotatePassword(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleRotate() }}
-              sx={{ mt: 1 }}
-              autoFocus
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => { setShowRotate(false); setRotatePassword('') }}>Batal</Button>
-            <Button
-              variant="contained"
-              color="warning"
-              onClick={handleRotate}
-              disabled={rotating || !rotatePassword}
-            >
-              {rotating ? 'Merotasi...' : 'Rotate Sekarang'}
-            </Button>
-          </DialogActions>
-        </Dialog>
-      </Paper>
     </Box>
   )
 }

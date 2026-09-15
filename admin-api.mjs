@@ -7,20 +7,26 @@
 import { Router, json as expressJsonRaw } from 'express'
 import crypto from 'node:crypto'
 import multer from 'multer'
-import { generateLicenseCode, verifyLicenseCode } from './src/lib/licenseUtil.js'
+import { verifyLicenseCode } from './src/lib/licenseUtil.js'
 import {
   verifyAdmin, createSession, destroySession, getSessionUser, recordLoginAttempt,
  recentFailedLogins, logAudit, listAudit, listTenantsWithStats, createTenant,
  updateTenant, deleteTenant, listUsers, createUser, updateUser, deleteUser,
  getUserById, setLastLogin, getGlobalOverview, listPhotos, deletePhoto,
  listDesigns, getDesign, deleteDesign, saveDesign, updateDesign,
-  getConfig, saveConfig, listPresets, getPreset, savePreset, deletePreset,
-  listTiers, getTier, createTier, updateTier, deleteTier,
-  generateUserCode, assignUserCode, setUserTier, checkTierLimit, getUserTierLimit, getTenantUsage,
-  countTenantsByOwner, listTenantsByOwner, isTenantOwner,
-  recordLicenseCode, getLicenseByHash, listLicenseCodes, revokeLicenseCode, markLicenseRedeemed,
-  getCurrentSecret, getSecretByVersion, listSecretVersions, rotateSecret,
-  findUserByEmail,
+ getConfig, saveConfig, listPresets, getPreset, savePreset, deletePreset,
+ listTiers, getTier, createTier, updateTier, deleteTier,
+ generateUserCode, assignUserCode, setUserTier, checkTierLimit, getUserTierLimit, getTenantUsage,
+ countTenantsByOwner, listTenantsByOwner, isTenantOwner,
+ listPendingRegistrations, rejectTenantRegistration,
+ recordLicenseCode, getLicenseByHash, listLicenseCodes, listActivationCodes,
+ revokeLicenseCode, markLicenseRedeemed,
+ getSecretByVersion, listSecretVersions, rotateSecret,
+ findUserByEmail,
+ createUserSession, getUserSessionUser, destroyUserSession,
+  activateTenantSubscription, getTenantSubscription, approveTenantRegistration,
+  getEffectiveTenantStatus, createSubscriptionPayment, markSubscriptionPaymentPaid,
+  markSubscriptionPaymentFailed, setSubscriptionPaymentSnapToken,
   pool,
 } from './db.mjs'
 
@@ -49,7 +55,8 @@ function cookie(name, value, opts = {}) {
 
 function csrfCookie(value) {
   // CSRF cookie must be readable by JS for double-submit pattern.
-  return `${CSRF_COOKIE}=${value}; Path=/; SameSite=Strict${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`
+  // Secure dihilangkan agar bisa dipakai via HTTP (Cloudflare Tunnel, localhost dev).
+  return `${CSRF_COOKIE}=${value}; Path=/; SameSite=Strict`
 }
 
 function genCsrf() {
@@ -60,16 +67,27 @@ function genToken() {
   return crypto.randomBytes(32).toString('hex')
 }
 
+// Kode aktivasi 6 karakter alfanumerik (charset tanpa I/O/0/1) — selalu UPPERCASE.
+// Sama charset dengan access code booth; pakai crypto (bukan Math.random).
+const ACTIVATION_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+function randomActivationCode() {
+  let out = ''
+  for (let i = 0; i < 6; i++) {
+    out += ACTIVATION_CHARSET[crypto.randomInt(0, ACTIVATION_CHARSET.length)]
+  }
+  return out
+}
+
 function clientIp(req) {
   return (req.get('x-forwarded-for') || '').split(',')[0].trim() || req.socket.remoteAddress || null
 }
 
 function buildSessionCookie(token, remember) {
-  return cookie(ADMIN_COOKIE, token, { maxAge: remember ? REMEMBER_TTL : SESSION_TTL, secure: true })
+  return cookie(ADMIN_COOKIE, token, { maxAge: remember ? REMEMBER_TTL : SESSION_TTL, secure: false })
 }
 
 function clearSessionCookie() {
-  return `${ADMIN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0`
+  return `${ADMIN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`
 }
 
 export function adminApi() {
@@ -108,7 +126,8 @@ export function adminApi() {
     }
     const token = await createSession(userId, rememberMe ? REMEMBER_TTL : SESSION_TTL)
     await logAudit({ action: 'login_success', userId, ip, ua: req.get('user-agent') })
-    res.set('Set-Cookie', [buildSessionCookie(token, rememberMe), csrfCookie(genCsrf())])
+    // Clear user_session cookie to avoid conflict
+    res.set('Set-Cookie', [buildSessionCookie(token, rememberMe), csrfCookie(genCsrf()), 'user_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'])
     res.json({
       user: {
         id: user.id, email: user.email, name: user.name, role: user.role,
@@ -223,6 +242,38 @@ export function adminApi() {
     res.json({ items, tier: tier ? { ...tier } : null, used, max: tier ? tier.max_tenants : null })
   })
 
+  // ── Approval registrasi vendor ──────────────────────────────────────────────
+  // Registrasi /api/auth/register membuat tenant status 'pending'; trial baru
+  // mulai setelah approve.
+  //   GET  /pending-registrations      → daftar tenant pending + email pendaftar
+  //   POST /registrations/:slug/approve → status 'trial' + trial_ends_at di-set
+  //   POST /registrations/:slug/reject  → status 'rejected' (tenant tetap ada)
+  r.get('/pending-registrations', requireSession, requireRole('super_admin'), async (_req, res) => {
+    const items = await listPendingRegistrations()
+    res.json({ items, total: items.length })
+  })
+
+  r.post('/registrations/:slug/approve', requireSession, requireRole('super_admin'), requireCsrf, async (req, res) => {
+    const slug = String(req.params.slug || '').trim()
+    const sub = await getTenantSubscription(slug)
+    if (!sub) return res.status(404).json({ error: 'Tenant tidak ditemukan' })
+    // Idempotent: approve ulang tetap aman (helper set active=true + mulai trial).
+    await approveTenantRegistration(slug)
+    await logAudit({ userId: req.user.id, tenantSlug: slug, action: 'registration_approve', target: slug, ip: clientIp(req) })
+    const tenant = await getTenantSubscription(slug)
+    res.json({ ok: true, tenant })
+  })
+
+  r.post('/registrations/:slug/reject', requireSession, requireRole('super_admin'), requireCsrf, async (req, res) => {
+    const slug = String(req.params.slug || '').trim()
+    const sub = await getTenantSubscription(slug)
+    if (!sub) return res.status(404).json({ error: 'Tenant tidak ditemukan' })
+    await rejectTenantRegistration(slug)
+    await logAudit({ userId: req.user.id, tenantSlug: slug, action: 'registration_reject', target: slug, ip: clientIp(req) })
+    const tenant = await getTenantSubscription(slug)
+    res.json({ ok: true, tenant })
+  })
+
   // Users CRUD (super_admin only)
   r.get('/users', requireSession, requireRole('super_admin'), async (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1)
@@ -233,11 +284,11 @@ export function adminApi() {
   })
 
   r.post('/users', requireSession, requireRole('super_admin'), requireCsrf, expressJson(), async (req, res) => {
-    const { email, password, role = 'tenant_admin', tenant_id = null, name = null, pricing_tier_id = null } = req.body || {}
+    const { email, password, tenant_id = null, name = null, pricing_tier_id = null } = req.body || {}
     if (!email || !password) return res.status(400).json({ error: 'email dan password wajib' })
     if (String(password).length < 8) return res.status(400).json({ error: 'password minimal 8 karakter' })
-    const user = await createUser({ email, password, role, tenantId: tenant_id, name, pricingTierId: pricing_tier_id })
-    await logAudit({ userId: req.user.id, action: 'user_create', target: user.email, metadata: { role }, ip: clientIp(req) })
+    const user = await createUser({ email, password, role: req.body.role || 'tenant_admin', tenantId: tenant_id, name, pricingTierId: pricing_tier_id })
+    await logAudit({ userId: req.user.id, action: 'user_create', target: user.email, ip: clientIp(req) })
     res.json(user)
   })
 
@@ -310,44 +361,75 @@ export function adminApi() {
     res.json({ ok: true })
   })
 
-  // ── License Code (HMAC-signed, offline-valid, versioned secrets) ─────────────────
+  // ── Kode Aktivasi (6 char alfanumerik) — SATU-SATUNYA jalur aktivasi admin ───
   // Generate: POST /api/admin/license/generate
-  //   Body: { vendorId, expiryDays, tierSlug? }
-  //   Returns: { code, vendorId, expiryDays }
-  //   Code format: vendorId-expiryTimestamp-hmacSha256
+  //   Body: { userId, expiresDays? }  (expiresDays default 7, di-clamp 1..30)
+  //   Returns: { code: 'AB3K7Q', expires_at, id }
+  //   Kode disimpan sebagai SHA256 hash + plaintext (buat re-copy admin),
+  //   secret_version NULL menandai ini kode aktivasi (bukan HMAC legacy).
+  //   Catatan: HMAC legacy tetap hidup untuk LicenseGate vendor via /license/redeem,
+  //   tapi TIDAK lagi digenerate dari endpoint ini.
   r.post('/license/generate', requireSession, requireRole('super_admin'), requireCsrf, expressJson(), async (req, res) => {
-    const { vendorId, expiryDays } = req.body || {}
-    if (!vendorId || !expiryDays) return res.status(400).json({ error: 'vendorId dan expiryDays wajib' })
-    if (typeof expiryDays !== 'number' || expiryDays <= 0) return res.status(400).json({ error: 'expiryDays harus angka positif' })
+    const { userId } = req.body || {}
 
-    // Get current active secret (versioned, from DB or env)
-    let currentSecret = process.env.LICENSE_SECRET_KEY || null
-    let secretVersion = 1
-    try {
-      const rec = await getCurrentSecret()
-      if (rec) { currentSecret = rec.secret; secretVersion = rec.version }
-    } catch { /* fallback to env */ }
+    // expiresDays opsional: default 7 hari, dibatasi 1..30 hari.
+    let expiresDays = Number(req.body?.expiresDays)
+    if (!Number.isFinite(expiresDays) || expiresDays <= 0) expiresDays = 7
+    expiresDays = Math.min(30, Math.max(1, Math.round(expiresDays)))
 
-    if (!currentSecret) {
-      return res.status(500).json({ error: 'License secret belum dikonfigurasi. Set LICENSE_SECRET_KEY di environment.' })
+    if (!userId) return res.status(400).json({ error: 'userId wajib untuk kode aktivasi' })
+    const { rows } = await pool.query(
+      `SELECT u.id, u.email, t.slug AS tier_slug
+       FROM admin_user u LEFT JOIN pricing_tiers t ON t.id = u.pricing_tier_id
+       WHERE u.id = $1`,
+      [userId]
+    )
+    if (!rows.length) return res.status(404).json({ error: 'User tidak ditemukan' })
+    const targetUser = rows[0]
+    const expiresAt = new Date(Date.now() + expiresDays * 86400000)
+
+    // Generate 6 char unik; retry kalau tabrakan code_hash (ON CONFLICT DO NOTHING → null).
+    let code = ''
+    let inserted = null
+    for (let attempt = 0; attempt < 10 && !inserted; attempt++) {
+      code = randomActivationCode()
+      inserted = await recordLicenseCode({
+        code,
+        vendorId: targetUser.email,
+        tierSlug: targetUser.tier_slug || null,
+        expiresAt,
+        issuedBy: req.user.id,
+        secretVersion: null, // kode aktivasi tidak HMAC-signable
+        forUserId: targetUser.id,
+      }).catch(() => null)
     }
-
-    const code = generateLicenseCode(vendorId, expiryDays, currentSecret)
-    const expiresAt = new Date(Date.now() + expiryDays * 86400000)
-    // Record issued code in DB (hash only) for audit + revocation tracking.
-    // secret_version is stored so we can verify codes signed with older secrets.
-    await recordLicenseCode({ code, vendorId, tierSlug: req.body.tierSlug || null, expiresAt, issuedBy: req.user.id, secretVersion }).catch(() => { })
-    await logAudit({ userId: req.user.id, action: 'license_generate', target: vendorId, ip: clientIp(req) })
-    res.json({ code, vendorId, expiryDays, secretVersion })
+    if (!inserted) return res.status(500).json({ error: 'Gagal membuat kode, coba lagi' })
+    await logAudit({ userId: req.user.id, action: 'license_generate', target: targetUser.email, metadata: { format: 'code6', forUserId: targetUser.id }, ip: clientIp(req) })
+    return res.json({ code, expires_at: inserted.expires_at, id: inserted.id })
   })
 
   // List issued codes for admin UI
   //   GET /api/admin/license/list?limit=20&offset=0&vendor_id=...
+  //   (campur kode HMAC legacy + kode aktivasi; dipertahankan apa adanya)
   r.get('/license/list', requireSession, requireRole('super_admin'), async (req, res) => {
     const { items, total } = await listLicenseCodes({
       limit: Math.min(Number(req.query.limit) || 20, 200),
       offset: Number(req.query.offset) || 0,
       vendorId: req.query.vendor_id || null,
+    })
+    res.json({ items, total })
+  })
+
+  // List kode aktivasi 6 char khusus tabel "Kode Aktivasi" di UI.
+  //   GET /api/admin/license/codes?limit=50&offset=0
+  // Endpoint BARU + query terpisah supaya /license/list lama tidak tersentuh.
+  // Kolom: id, code_plain, tier_slug, expires_at, active, created_at, redeemed_at,
+  //        redeemed_by_email, redeemed_tenant, redeemed_user_email, for_user_email,
+  //        secret_version (NULL = kode aktivasi).
+  r.get('/license/codes', requireSession, requireRole('super_admin'), async (req, res) => {
+    const { items, total } = await listActivationCodes({
+      limit: Math.min(Number(req.query.limit) || 50, 200),
+      offset: Number(req.query.offset) || 0,
     })
     res.json({ items, total })
   })
@@ -372,7 +454,9 @@ export function adminApi() {
     return entry.count <= limit
   }
 
-  // Redeem a license (vendor enters code on booth tablet)
+  // LEGACY vendor HMAC redeem — jangan dipakai flow SaaS baru.
+  // Dipakai booth LicenseGate (vendor build VITE_LICENSE_ENFORCE=1), perilakunya
+  // sengaja TIDAK diubah. Aktivasi SaaS user pakai /license/redeem-for-user.
   //   POST /api/admin/license/redeem
   //   Body: { code, deviceFingerprint }
   //   Unauthenticated — no session required (vendor has no account yet).
@@ -559,7 +643,7 @@ export function adminApi() {
       `DELETE FROM admin_audit_log WHERE created_at < now() - make_interval(days => $1) RETURNING id`,
       [olderThanDays]
     )
-    await logAudit({ userId: req.user.id, action: 'audit_cleanup', metadata: { older_than_days, deleted: result.rowCount }, ip: clientIp(req) })
+    await logAudit({ userId: req.user.id, action: 'audit_cleanup', ip: clientIp(req) })
     res.json({ ok: true, deleted: result.rowCount })
   })
 
@@ -653,7 +737,6 @@ export function adminApi() {
       userId: req.user.id,
       action: 'config_update',
       target: tenantSlug,
-      metadata: { preset_name: req.body?.preset_name ?? null },
       ip: clientIp(req),
     })
     res.json({ ok: true })
@@ -804,16 +887,199 @@ export function adminApi() {
     })
   })
 
+  // POST /api/admin/license/redeem-for-user — JALUR KODE 6 DIGIT (SaaS).
+  //   Dipanggil user yang sudah login untuk menukar kode aktivasi 6 char
+  //   (dibuat via POST /license/generate) → aktivasi langganan tenant 30 hari.
+  //   Body: { code } → Response: { ok: true, tenant: <getTenantSubscription> }
+  //   Bukan jalur HMAC vendor — itu tetap di POST /license/redeem (legacy).
+  r.post('/license/redeem-for-user', requireUserSession, requireCsrf, expressJson(), async (req, res) => {
+    const { code } = req.body || {}
+    if (!code) return res.status(400).json({ error: 'Kode akses wajib diisi' })
+    const rawCode = String(code).trim()
+    // Kode aktivasi disimpan UPPERCASE tanpa spasi. Normalisasi dulu, tapi tetap
+    // fallback ke raw code supaya kode HMAC legacy (case-sensitive) tetap valid.
+    const normCode = rawCode.replace(/\s+/g, '').toUpperCase()
+    const hashInputs = [...new Set([normCode, rawCode].filter(Boolean))]
+    const codeHashes = hashInputs.map((c) => crypto.createHash('sha256').update(c).digest('hex'))
+
+    try {
+      // Lookup by SHA256 — berlaku untuk kode aktivasi maupun HMAC legacy.
+      const { rows: codeRows } = await pool.query(
+        `SELECT id, code_hash, expires_at, active, for_user_id
+         FROM license_codes WHERE code_hash = ANY($1)`,
+        [codeHashes]
+      )
+      if (!codeRows.length) return res.status(400).json({ error: 'Kode akses tidak valid' })
+      const lc = codeRows[0]
+      const matchedCode = hashInputs[codeHashes.indexOf(lc.code_hash)] ?? normCode
+      if (!lc.active) return res.status(400).json({ error: 'Kode sudah digunakan atau dicabut' })
+      if (new Date(lc.expires_at) < new Date()) return res.status(400).json({ error: 'Kode sudah kadaluarsa' })
+      // Kode bisa di-bind ke user tertentu (1:1).
+      if (lc.for_user_id && lc.for_user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Kode ini hanya bisa digunakan oleh user yang ditentukan' })
+      }
+
+      // Cari tenant user: dari sesi dulu, fallback ke owner_user_id.
+      let tenantSlug = req.user.tenant_id || null
+      if (!tenantSlug) {
+        const owner = await pool.query(
+          'SELECT slug FROM tenants WHERE owner_user_id = $1 ORDER BY created_at ASC LIMIT 1',
+          [req.user.id]
+        )
+        tenantSlug = owner.rows[0]?.slug || null
+      }
+      if (!tenantSlug) return res.status(400).json({ error: 'Anda belum memiliki tenant' })
+
+      // Kalau user belum terhubung tenant (ketemu via owner_user_id), sambungkan.
+      if (!req.user.tenant_id) {
+        await pool.query(
+          `UPDATE admin_user SET tenant_id = $1, role = 'tenant_admin', updated_at = now() WHERE id = $2`,
+          [tenantSlug, req.user.id]
+        )
+      }
+
+      // Aktifkan langganan 30 hari + tandai kode terpakai.
+      await activateTenantSubscription(tenantSlug, 30)
+      await markLicenseRedeemed({ code: matchedCode, userEmail: req.user.email, tenantSlug, userId: req.user.id })
+      await logAudit({ userId: req.user.id, tenantSlug, action: 'license_redeem_user', target: tenantSlug, ip: clientIp(req) })
+
+      const tenant = await getTenantSubscription(tenantSlug)
+      res.json({ ok: true, tenant })
+    } catch (e) {
+      console.error('Redeem-for-user error:', e)
+      res.status(500).json({ error: 'Gagal mengaktifkan kode akses' })
+    }
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Subscription self-pay (Midtrans Snap)
+  //   Harga FLAT bulanan dari env PB_FLAT_PRICE (default 150000 IDR).
+  //   Endpoint butuh session user (user_session) — bukan admin_session.
+  //   Server key TIDAK pernah dikirim ke client; client hanya dapat client_key.
+  // ──────────────────────────────────────────────────────────────────────────
+  const MIDTRANS_FLAT_PRICE = Number(process.env.PB_FLAT_PRICE || 150000)
+  const MIDTRANS_IS_PRODUCTION = ['1', 'true'].includes(String(process.env.MIDTRANS_IS_PRODUCTION || '').toLowerCase())
+  const midtransClientKey = () => process.env.MIDTRANS_CLIENT_KEY || ''
+
+  // GET /subscription/price — info harga + client key untuk Snap.js. Session apa pun.
+  r.get('/subscription/price', requireSession, (_req, res) => {
+    res.json({
+      price: MIDTRANS_FLAT_PRICE,
+      currency: 'IDR',
+      client_key: midtransClientKey(),
+      is_production: MIDTRANS_IS_PRODUCTION,
+    })
+  })
+
+  // POST /subscription/pay — buat transaksi Snap untuk tenant user.
+  // Response: { token, redirect_url, client_key, is_production, order_id }
+  //   atau { mock:true, ... } bila MIDTRANS_SERVER_KEY belum diset (mode simulasi dev).
+  r.post('/subscription/pay', requireUserSession, requireCsrf, expressJson(), async (req, res) => {
+    try {
+      // Tenant scope: dari sesi, fallback owner_user_id (1 user = 1 tenant utama).
+      let tenantSlug = req.user.tenant_id || null
+      if (!tenantSlug) {
+        const owner = await pool.query(
+          'SELECT slug FROM tenants WHERE owner_user_id = $1 ORDER BY created_at ASC LIMIT 1',
+          [req.user.id]
+        )
+        tenantSlug = owner.rows[0]?.slug || null
+      }
+      if (!tenantSlug) return res.status(400).json({ error: 'Anda belum memiliki tenant' })
+
+      // Tenant harus trial/active (termasuk suspended/expired → tolak jelas).
+      const eff = await getEffectiveTenantStatus(tenantSlug)
+      if (!['trial', 'active'].includes(eff)) {
+        return res.status(403).json({
+          error: `Langganan tidak bisa diperpanjang (status: ${eff || 'tidak diketahui'}).`,
+        })
+      }
+
+      const amount = MIDTRANS_FLAT_PRICE
+      const orderId = `SUB-${tenantSlug}-${Date.now()}`
+      await createSubscriptionPayment({ tenantSlug, orderId, amount })
+
+      const serverKey = process.env.MIDTRANS_SERVER_KEY || ''
+      if (!serverKey) {
+        // MOCK MODE (dev/simulasi): tanpa server key, tandai lunas + aktifkan 30 hari
+        // langsung supaya alur dashboard bisa dites tanpa kredensial Midtrans.
+        await markSubscriptionPaymentPaid(orderId)
+        await activateTenantSubscription(tenantSlug, 30)
+        const tenant = await getTenantSubscription(tenantSlug)
+        await logAudit({ userId: req.user.id, tenantSlug, action: 'subscription_pay_mock', target: orderId, ip: clientIp(req) })
+        return res.json({
+          mock: true,
+          token: null,
+          redirect_url: null,
+          client_key: midtransClientKey(),
+          is_production: MIDTRANS_IS_PRODUCTION,
+          order_id: orderId,
+          tenant,
+        })
+      }
+
+      const snapUrl = MIDTRANS_IS_PRODUCTION
+        ? 'https://app.midtrans.com/snap/v1/transactions'
+        : 'https://app.sandbox.midtrans.com/snap/v1/transactions'
+      const auth = Buffer.from(`${serverKey}:`).toString('base64')
+      const snapResp = await fetch(snapUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Basic ${auth}`,
+        },
+        body: JSON.stringify({
+          transaction_details: { order_id: orderId, gross_amount: amount },
+          customer_details: { email: req.user.email },
+        }),
+      })
+      const data = await snapResp.json().catch(() => ({}))
+      if (!snapResp.ok || !data.token) {
+        await markSubscriptionPaymentFailed(orderId)
+        // Jangan bocorkan server key; catat pesan error Midtrans saja.
+        console.error('[midtrans] snap error', snapResp.status, data.error_messages || data.status_message || '')
+        return res.status(502).json({ error: 'Gagal membuat transaksi pembayaran' })
+      }
+      await setSubscriptionPaymentSnapToken(orderId, data.token)
+      await logAudit({ userId: req.user.id, tenantSlug, action: 'subscription_pay_created', target: orderId, ip: clientIp(req) })
+      res.json({
+        token: data.token,
+        redirect_url: data.redirect_url || null,
+        client_key: midtransClientKey(),
+        is_production: MIDTRANS_IS_PRODUCTION,
+        order_id: orderId,
+      })
+    } catch (e) {
+      console.error('[midtrans] pay error:', e.message)
+      res.status(500).json({ error: 'Gagal memproses pembayaran' })
+    }
+  })
+
   return r
 }
 
 // =============== Middleware ===============
 async function requireSession(req, res, next) {
   const cookieHeader = req.get('cookie') || ''
+  // Dual auth: admin_session diprioritaskan, user_session fallback.
+  // Kedua token di-lookup INDEPENDEN — jangan pakai token admin untuk lookup user
+  // (bug lama: token pertama dipakai untuk kedua lookup → 401 palsu).
   const m = cookieHeader.match(/(?:^|;\s*)admin_session=([^;]+)/)
-  const token = m ? m[1] : null
-  if (!token) return res.status(401).json({ error: 'Sesi tidak ditemukan' })
-  const user = await getSessionUser(token)
+  const m2 = cookieHeader.match(/(?:^|;\s*)user_session=([^;]+)/)
+  const adminToken = m ? m[1] : null
+  const userToken = m2 ? m2[1] : null
+  if (!adminToken && !userToken) return res.status(401).json({ error: 'Sesi tidak ditemukan' })
+  let user = null
+  let token = null
+  if (adminToken) {
+    user = await getSessionUser(adminToken)
+    if (user) token = adminToken
+  }
+  if (!user && userToken) {
+    user = await getUserSessionUser(userToken)
+    if (user) token = userToken
+  }
   if (!user) return res.status(401).json({ error: 'Sesi kadaluarsa' })
   // Re-check tenant access: tenant_admin can only operate on their tenant
   if (user.role === 'tenant_admin' && user.tenant_id) {
@@ -844,3 +1110,21 @@ function requireCsrf(req, res, next) {
   }
   next()
 }
+
+// ──────────────────────────────────────────────────────────────
+// User Session Middleware & Endpoints
+// ──────────────────────────────────────────────────────────────
+
+// Middleware: require user session (reads user_session cookie)
+async function requireUserSession(req, res, next) {
+  const cookieHeader = req.get('cookie') || ''
+  const m = cookieHeader.match(/(?:^|;\s*)user_session=([^;]+)/)
+  const token = m ? m[1] : null
+  if (!token) return res.status(401).json({ error: 'Sesi tidak ditemukan' })
+  const user = await getUserSessionUser(token)
+  if (!user) return res.status(401).json({ error: 'Sesi kadaluarsa' })
+  req.user = user
+  next()
+}
+
+

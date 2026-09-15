@@ -12,9 +12,8 @@ interface AuditItem {
   user_id: number | null
   tenant_slug: string | null
   action: string
-  target: string | null
-  metadata: unknown
-  created_at: string
+   target: string | null
+   created_at: string
 }
 
 const ACTION_COLORS: Record<string, 'default' | 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success'> = {
@@ -181,13 +180,12 @@ export default function AuditLog() {
               <TableCell>Action</TableCell>
               <TableCell>Tenant</TableCell>
               <TableCell>Target</TableCell>
-              <TableCell>Metadata</TableCell>
               <TableCell align="right">Aksi</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {loading && <TableRow><TableCell colSpan={8} align="center">Memuat…</TableCell></TableRow>}
-            {!loading && filtered.length === 0 && <TableRow><TableCell colSpan={8} align="center">Belum ada log</TableCell></TableRow>}
+            {loading && <TableRow><TableCell colSpan={7} align="center">Memuat…</TableCell></TableRow>}
+            {!loading && filtered.length === 0 && <TableRow><TableCell colSpan={7} align="center">Belum ada log</TableCell></TableRow>}
             {filtered.map((r) => (
               <TableRow key={r.id} hover selected={selected.has(r.id)}>
                 <TableCell padding="checkbox">
@@ -204,9 +202,6 @@ export default function AuditLog() {
                 </TableCell>
                 <TableCell>{r.tenant_slug || '-'}</TableCell>
                 <TableCell className="mono">{r.target || '-'}</TableCell>
-                <TableCell className="mono" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {r.metadata ? JSON.stringify(r.metadata) : '-'}
-                </TableCell>
                 <TableCell align="right">
                   <Tooltip title="Hapus log">
                     <IconButton size="small" color="error" onClick={() => handleDelete(r.id)}>

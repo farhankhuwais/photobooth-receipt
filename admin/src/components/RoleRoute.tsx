@@ -20,8 +20,8 @@ export default function RoleRoute({ children, roles }: Props) {
   }
 
   if (roles && roles.length > 0 && (!user || !roles.includes(user.role))) {
-    // User tidak punya akses ke route ini, redirect ke Manage (halaman default tenant)
-    return <Navigate to="/manage" replace />
+      // User tidak punya akses ke route ini, redirect ke Beranda
+    return <Navigate to="/" replace />
   }
 
   return <>{children}</>

@@ -15,7 +15,7 @@ import type { User, PricingTier } from '@/types'
 const ROLES = [
   { value: 'super_admin', label: 'Super Admin' },
   { value: 'tenant_admin', label: 'Tenant Admin' },
-  { value: 'tenant_user', label: 'Tenant User' },
+  { value: 'tenant_admin', label: 'Tenant Admin' },
 ]
 
 export default function Users() {
@@ -125,7 +125,7 @@ export default function Users() {
     }
   }
 
-  const needsTenant = form.role === 'tenant_admin' || form.role === 'tenant_user'
+  const needsTenant = form.role === 'tenant_admin'
 
   return (
     <Box>

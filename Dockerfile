@@ -25,10 +25,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
-# Copy built photobooth app + admin SPA + server entrypoints
+# Copy built photobooth app + admin SPA + server entrypoints + static assets
 COPY --from=build /app/dist ./dist
 COPY serve.mjs db.mjs admin-api.mjs ./
 COPY src/lib/licenseUtil.js ./src/lib/licenseUtil.js
+COPY public/ ./public/
 # License secret persisted via /data volume (no file COPY needed)
 VOLUME ["/data"]
 EXPOSE 8080

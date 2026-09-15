@@ -102,9 +102,10 @@ body {
   100% { opacity: 1; transform: scale(1); }
 }
 
-/* Anti-zoom booth: blokir pinch-zoom & double-tap zoom (iOS/Android) */
+/* Anti-zoom booth: `manipulation` matikan double-tap zoom tapi tetap izinkan
+   scroll/pan. Pinch iOS juga dicegah lewat gesturestart di useKiosk. */
 #root {
-  touch-action: pan-y;
+  touch-action: manipulation;
 }
 html, body {
   overscroll-behavior: none;
